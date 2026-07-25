@@ -165,14 +165,23 @@ Nacos 配置只保存非敏感参数。密码、JWT/Jasypt 密钥和 Provider Ke
 
 生产 Compose 覆盖文件使用必填变量校验，缺少数据库、RabbitMQ、JWT、Jasypt、Nacos 或 Grafana 密钥时拒绝启动。部署流程会在启动业务服务前强制重跑一次 Nacos 配置发布容器，避免复用旧的一次性容器。
 
+Kubernetes 最小迁移模式不启动 Nacos。`ai-gateway` Namespace 中的 ConfigMap 会关闭 Nacos 配置和发现，并通过环境变量把 Gateway 路由切换为 Kubernetes Service DNS：
+
+```text
+CORE_SERVICE_BASE_URL=http://core-service:8081
+CORE_SERVICE_WEBSOCKET_URL=ws://core-service:8081
+```
+
+Compose 则显式保留 `lb://core-service` 和 `lb:ws://core-service`。两种部署方式复用同一份 `application.yml`，只改变外部配置。
+
 ## 6. 路由与协议
 
 `gateway-service` 显式声明路由：
 
 | Route | URI | Predicate |
 | --- | --- | --- |
-| `core-http` | `lb://core-service` | `/api/**`、`/v1/**`、`/chat/**`、`/responses/**`、`/backend-api/codex/**` |
-| `core-websocket` | `lb:ws://core-service` | Responses 三个升级路径并且 `Upgrade: websocket` |
+| `core-http` | `${CORE_SERVICE_BASE_URL:lb://core-service}` | `/api/**`、`/v1/**`、`/chat/**`、`/responses/**`、`/backend-api/codex/**` |
+| `core-websocket` | `${CORE_SERVICE_WEBSOCKET_URL:lb:ws://core-service}` | Responses 三个升级路径并且 `Upgrade: websocket` |
 
 WebSocket 路径：
 

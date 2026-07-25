@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: core-service-config
+  namespace: ai-gateway
+  labels:
+    app: core-service
+    app.kubernetes.io/part-of: ai-gateway
+data:
+  SERVER_PORT: "8081"
+
+  # Nacos is intentionally disabled while the two applications run in Kubernetes.
+  NACOS_CONFIG_ENABLED: "false"
+  NACOS_DISCOVERY_ENABLED: "false"
+
+  # MySQL, Redis, and RabbitMQ still run outside the cluster during this migration step.
+  # For minikube, verify that host.minikube.internal resolves and that the host ports
+  # are reachable from a Pod before applying this file.
+  DB_HOST: "host.minikube.internal"
+  DB_PORT: "3306"
+  DB_NAME: "ai_gateway"
+  DB_USERNAME: "ai_gateway"
+
+  REDIS_HOST: "host.minikube.internal"
+  REDIS_PORT: "6379"
+
+  RABBITMQ_HOST: "host.minikube.internal"
+  RABBITMQ_PORT: "5672"
+  RABBITMQ_USERNAME: "ai_gateway"
+
+  OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1"
+  OPENROUTER_APP_TITLE: "AI Gateway Learning"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: core-service
+  namespace: ai-gateway
+  labels:
+    app: core-service
+    app.kubernetes.io/part-of: ai-gateway
+spec:
+  # Refresh tokens are still stored in memory, so keep a single Core replica for now.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: core-service
+  template:
+    metadata:
+      labels:
+        app: core-service
+        app.kubernetes.io/part-of: ai-gateway
+    spec:
+      containers:
+        - name: core-service
+          image: ai-gateway-core-service:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: core-service-config
+            - secretRef:
+                name: core-service-secret
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 45
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 150m
+              memory: 384Mi
+            limits:
+              cpu: 750m
+              memory: 640Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: core-service
+  namespace: ai-gateway
+  labels:
+    app: core-service
+    app.kubernetes.io/part-of: ai-gateway
+spec:
+  type: ClusterIP
+  selector:
+    app: core-service
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http

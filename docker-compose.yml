@@ -14,6 +14,8 @@ services:
       NACOS_DISCOVERY_ENABLED: "true"
       NACOS_USERNAME: ${NACOS_USERNAME:-nacos}
       NACOS_PASSWORD: ${NACOS_ADMIN_PASSWORD:-nacos-local-admin-change-me}
+      CORE_SERVICE_BASE_URL: "lb://core-service"
+      CORE_SERVICE_WEBSOCKET_URL: "lb:ws://core-service"
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:
@@ -155,7 +157,7 @@ services:
       MYSQL_USER: ai_gateway
       MYSQL_PASSWORD: ${DB_PASSWORD:-ai_gateway_dev}
     ports:
-      - "127.0.0.1:3306:3306"
+      - "${MIDDLEWARE_BIND_ADDRESS:-127.0.0.1}:3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -173,7 +175,7 @@ services:
     image: redis:7.4
     container_name: ai-gateway-redis
     ports:
-      - "127.0.0.1:6379:6379"
+      - "${MIDDLEWARE_BIND_ADDRESS:-127.0.0.1}:6379:6379"
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
@@ -190,7 +192,7 @@ services:
       RABBITMQ_DEFAULT_USER: ai_gateway
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-ai_gateway_dev}
     ports:
-      - "127.0.0.1:5672:5672"
+      - "${MIDDLEWARE_BIND_ADDRESS:-127.0.0.1}:5672:5672"
       - "127.0.0.1:15672:15672"
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq

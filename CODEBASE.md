@@ -74,8 +74,8 @@ gateway-service/src/main/java/com/example/aigateway/gateway/
 - 从 Nacos Data ID `gateway-service.yml`、Group `AI_GATEWAY` 加载配置；
 - 注册到 Nacos；
 - 关闭 Discovery Locator，避免自动公开任意注册服务；
-- `core-http` 路由到 `lb://core-service`；
-- `core-websocket` 路由到 `lb:ws://core-service`；
+- `core-http` 默认路由到 `lb://core-service`，可由 `CORE_SERVICE_BASE_URL` 覆盖；
+- `core-websocket` 默认路由到 `lb:ws://core-service`，可由 `CORE_SERVICE_WEBSOCKET_URL` 覆盖；
 - 配置连接、响应超时和 `text/event-stream`；
 - 暴露 health、info、prometheus。
 
@@ -370,6 +370,10 @@ core-service/src/main/resources/mapper/
 | `deploy/prepare-nacos-env.sh` | 安全地向 `.env` 追加随机 Nacos 凭据和 Grafana 管理密码，不覆盖已有值 |
 | `deploy/nacos/config/*.yml` | 两个服务的非敏感 Nacos Data ID 内容 |
 | `deploy/nacos/publish-config.sh` | 登录 Nacos 并由一次性容器发布两个 Data ID |
+| `deploy/k8s/gateway-service.yaml` | Namespace、Gateway ConfigMap、Deployment 与 ClusterIP Service |
+| `deploy/k8s/core-service.yaml` | Core ConfigMap、Deployment 与 ClusterIP Service；只引用集群 Secret |
+| `deploy/k8s/.env.secret.example` | 本地 Secret 变量模板，不包含真实值 |
+| `deploy/k8s/README.md` | 本地 Kubernetes 最小迁移和验证步骤 |
 | `nginx/default.conf` | 公网 HTTP、SSE 和 WebSocket 代理；其他路径返回 404 |
 | `nginx/https.conf.example` | 未默认启用的 HTTPS 模板 |
 | `monitoring/prometheus.yml` | Gateway 和 Core 指标抓取 |

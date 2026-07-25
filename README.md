@@ -72,6 +72,7 @@ ai-gateway/
 │  └─ src/
 ├─ deploy/
 │  ├─ prepare-nacos-env.sh         生成 Nacos 随机认证参数
+│  ├─ k8s/                         双服务 Kubernetes 最小迁移清单
 │  └─ nacos/
 │     ├─ publish-config.sh         一次性发布 Data ID
 │     └─ config/                   两个服务的非敏感配置
@@ -157,6 +158,15 @@ NACOS_CONFIG_ENABLED=true
 ```
 
 `gateway-service` 使用 `lb://core-service` 路由，因此没有 Nacos 或等价的服务实例列表时，它不能找到核心服务。
+
+Gateway 的目标地址可以由环境变量覆盖：
+
+```text
+CORE_SERVICE_BASE_URL
+CORE_SERVICE_WEBSOCKET_URL
+```
+
+Compose 显式使用 Nacos 负载均衡 URI；`deploy/k8s/gateway-service.yaml` 中的 ConfigMap 则关闭 Nacos，并把它们改为同一 Namespace 下的 `core-service` ClusterIP Service。最小 Kubernetes 迁移步骤见 `deploy/k8s/README.md`。
 
 ## 路由与请求 ID
 

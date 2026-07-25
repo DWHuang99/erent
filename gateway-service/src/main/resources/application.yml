@@ -31,12 +31,12 @@ spring:
             - text/event-stream
           routes:
             - id: core-websocket
-              uri: lb:ws://core-service
+              uri: "${CORE_SERVICE_WEBSOCKET_URL:lb:ws://core-service}"
               predicates:
                 - Path=/v1/responses,/responses,/backend-api/codex/responses
                 - Header=Upgrade,(?i)websocket
             - id: core-http
-              uri: lb://core-service
+              uri: "${CORE_SERVICE_BASE_URL:lb://core-service}"
               predicates:
                 - Path=/api/**,/v1/**,/chat/**,/responses/**,/backend-api/codex/**
 
