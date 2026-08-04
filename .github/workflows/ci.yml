@@ -70,13 +70,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Normalize GHCR repository name
+        id: image_repo
+        shell: bash
+        run: echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
       - name: Build and optionally push Docker image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ./${{ matrix.service }}/Dockerfile
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          tags: ghcr.io/${{ github.repository }}-${{ matrix.service }}:${{ github.sha }}
+          tags: ghcr.io/${{ steps.image_repo.outputs.name }}-${{ matrix.service }}:${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 

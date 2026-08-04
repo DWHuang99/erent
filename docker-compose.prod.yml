@@ -1,9 +1,9 @@
 services:
   gateway-service:
-    image: ghcr.io/hdw123456/erent-gateway-service:${IMAGE_TAG:?IMAGE_TAG is required}
+    image: ghcr.io/dwhuang99/erent-gateway-service:${IMAGE_TAG:?IMAGE_TAG is required}
 
   core-service:
-    image: ghcr.io/hdw123456/erent-core-service:${IMAGE_TAG:?IMAGE_TAG is required}
+    image: ghcr.io/dwhuang99/erent-core-service:${IMAGE_TAG:?IMAGE_TAG is required}
     environment:
       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}

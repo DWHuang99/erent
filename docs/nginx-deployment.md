@@ -325,8 +325,8 @@ docker compose \
 镜像：
 
 ```text
-ghcr.io/hdw123456/erent-gateway-service:<commit-sha>
-ghcr.io/hdw123456/erent-core-service:<commit-sha>
+ghcr.io/dwhuang99/erent-gateway-service:<commit-sha>
+ghcr.io/dwhuang99/erent-core-service:<commit-sha>
 ```
 
 两个服务必须使用同一个 commit SHA，避免协议或配置版本错配。

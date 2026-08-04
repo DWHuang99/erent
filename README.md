@@ -201,8 +201,8 @@ CI/CD 行为：
 
 1. `develop`、`main` 的 push 和 Pull Request 执行 `mvn clean verify`；
 2. `main` 测试通过后分别构建并推送两个镜像：
-   - `ghcr.io/hdw123456/erent-gateway-service:<commit-sha>`
-   - `ghcr.io/hdw123456/erent-core-service:<commit-sha>`
+   - `ghcr.io/dwhuang99/erent-gateway-service:<commit-sha>`
+   - `ghcr.io/dwhuang99/erent-core-service:<commit-sha>`
 3. 经 GitHub Environment `erent` 审批后，通过 SSH 在 `/opt/ai-gateway` 更新 Compose；
 4. 校验并重载 Nginx；
 5. 同时检查服务器本机和公网健康接口。
