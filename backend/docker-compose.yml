@@ -35,7 +35,7 @@ services:
   migrate:
     image: migrate/migrate:v4.19.1
     volumes:
-      - ./backend/migrations:/migrations:ro
+      - ./migrations:/migrations:ro
     command:
       - "-path=/migrations"
       - "-database=postgres://${POSTGRES_USER:-ai_gateway}:${POSTGRES_PASSWORD:-ai_gateway_dev}@postgres:5432/${POSTGRES_DB:-ai_gateway}?sslmode=disable"
@@ -47,7 +47,7 @@ services:
 
   api:
     build:
-      context: ./backend
+      context: .
       target: api
       args:
         BUILD_VERSION: local
@@ -60,6 +60,7 @@ services:
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REDIS_DB: ${REDIS_DB:-0}
+      LOG_FILE: ${LOG_FILE:-/var/log/ai-gateway/app.log}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in the root .env}
       JWT_ISSUER: ${JWT_ISSUER:-ai-gateway}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-ai-gateway-api}
@@ -71,6 +72,8 @@ services:
       BOOTSTRAP_ADMIN_ROLE: ${BOOTSTRAP_ADMIN_ROLE:-admin}
     expose:
       - "8080"
+    volumes:
+      - api-logs:/var/log/ai-gateway
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,7 +92,7 @@ services:
 
   gateway:
     build:
-      context: ./backend
+      context: .
       target: gateway
       args:
         BUILD_VERSION: local
@@ -113,6 +116,21 @@ services:
     mem_limit: 128m
     restart: unless-stopped
 
+  web:
+    build:
+      context: ../frontend
+      args:
+        NODE_VERSION: "22"
+    image: ai-gateway-web:local
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8088}:8080"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    mem_limit: 64m
+    restart: unless-stopped
+
 volumes:
+  api-logs:
   postgres-data:
   redis-data:

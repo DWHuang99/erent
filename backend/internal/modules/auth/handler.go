@@ -4,8 +4,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/DWHuang99/erent/internal/dto/request"
-	"github.com/DWHuang99/erent/internal/dto/response"
+	"erent/internal/dto/request"
+	"erent/internal/dto/response"
+
 	"github.com/gin-gonic/gin"
 )
 

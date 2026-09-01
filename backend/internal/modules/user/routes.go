@@ -1,7 +1,8 @@
 package user
 
 import (
-	jwtservice "github.com/DWHuang99/erent/internal/middleware/jwt"
+	jwtservice "erent/internal/middleware/jwt"
+
 	"github.com/gin-gonic/gin"
 )
 

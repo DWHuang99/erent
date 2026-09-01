@@ -2,9 +2,10 @@
 package apirouter
 
 import (
-	jwtservice "github.com/DWHuang99/erent/internal/middleware/jwt"
-	"github.com/DWHuang99/erent/internal/modules/auth"
-	"github.com/DWHuang99/erent/internal/modules/user"
+	jwtservice "erent/internal/middleware/jwt"
+	"erent/internal/modules/auth"
+	"erent/internal/modules/user"
+
 	"github.com/casbin/casbin/v3"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"

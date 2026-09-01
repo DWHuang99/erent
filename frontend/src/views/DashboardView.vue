@@ -23,7 +23,7 @@ import {
 } from '@lucide/vue'
 
 import AppLogo from '../components/AppLogo.vue'
-import { clearSession, getCurrentUser, logout } from '../services/auth.js'
+import { clearSession, getCurrentUser, getReadiness, logout } from '../services/auth.js'
 
 const router = useRouter()
 const loading = ref(true)
@@ -99,10 +99,10 @@ async function loadDashboard(showRefresh = false) {
   try {
     const [currentUser, healthResponse] = await Promise.all([
       getCurrentUser(),
-      fetch('/health/ready').catch(() => null),
+      getReadiness(),
     ])
     user.value = currentUser
-    serviceOnline.value = healthResponse?.ok ?? false
+    serviceOnline.value = healthResponse
     lastCheckedAt.value = new Date()
   } catch (error) {
     clearSession()

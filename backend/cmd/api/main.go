@@ -2,20 +2,23 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 
-	"github.com/DWHuang99/erent/internal/config"
-	dbconnect "github.com/DWHuang99/erent/internal/database/connect"
-	"github.com/DWHuang99/erent/internal/dto/response"
-	casbinrbac "github.com/DWHuang99/erent/internal/middleware/casbin"
-	"github.com/DWHuang99/erent/internal/middleware/httpserver"
-	jwtservice "github.com/DWHuang99/erent/internal/middleware/jwt"
-	rdb "github.com/DWHuang99/erent/internal/middleware/redis"
-	"github.com/DWHuang99/erent/internal/modules/user"
-	apirouter "github.com/DWHuang99/erent/internal/router"
-	"github.com/DWHuang99/erent/internal/security"
+	"erent/internal/config"
+	dbconnect "erent/internal/database/connect"
+	"erent/internal/dto/response"
+	applogger "erent/internal/logger"
+	casbinrbac "erent/internal/middleware/casbin"
+	"erent/internal/middleware/httpserver"
+	jwtservice "erent/internal/middleware/jwt"
+	rdb "erent/internal/middleware/redis"
+	"erent/internal/modules/user"
+	apirouter "erent/internal/router"
+	"erent/internal/security"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -24,20 +27,33 @@ const serviceName = "ai-gateway"
 var version = "dev"
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
+	logger, logFile, err := applogger.NewLogger(os.Getenv("LOG_FILE"))
+	if err != nil {
+		slog.Error("initialize logger", "error", err)
+		return 1
+	}
+	defer func() {
+		if err := logFile.Close(); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "close log file: %v\n", err)
+		}
+	}()
+	slog.SetDefault(logger)
+
 	configuration, err := config.Load()
 	if err != nil {
 		slog.Error("load configuration", "error", err)
-		os.Exit(1)
+		return 1
 	}
-
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(logger)
 	connectContext, cancelConnect := context.WithTimeout(context.Background(), configuration.DatabaseConnectTimeout)
 	database, sqlDatabase, err := dbconnect.Connect(connectContext, configuration.DatabaseURL)
 	cancelConnect()
 	if err != nil {
-		logger.Error("connect database", "error", err)
-		os.Exit(1)
+		slog.Error("connect database", "error", err)
+		return 1
 	}
 	defer sqlDatabase.Close()
 	redisConnectContext, cancelRedisConnect := context.WithTimeout(context.Background(), configuration.DatabaseConnectTimeout)
@@ -49,21 +65,21 @@ func main() {
 	)
 	cancelRedisConnect()
 	if err != nil {
-		logger.Error("connect redis", "error", err)
-		os.Exit(1)
+		slog.Error("connect redis", "error", err)
+		return 1
 	}
 	defer redisClient.Close()
 
 	userRepository := user.NewRepository(database)
 	if configuration.BootstrapUsername != "" {
 		if !casbinrbac.IsSupportedRole(configuration.BootstrapRole) {
-			logger.Error("invalid bootstrap role", "role", configuration.BootstrapRole)
-			os.Exit(1)
+			slog.Error("invalid bootstrap role", "role", configuration.BootstrapRole)
+			return 1
 		}
 		passwordHash, err := security.HashPassword(configuration.BootstrapPassword)
 		if err != nil {
-			logger.Error("hash bootstrap password", "error", err)
-			os.Exit(1)
+			slog.Error("hash bootstrap password", "error", err)
+			return 1
 		}
 		if err := userRepository.CreateBootstrapUser(
 			context.Background(),
@@ -71,14 +87,14 @@ func main() {
 			passwordHash,
 			configuration.BootstrapRole,
 		); err != nil {
-			logger.Error("create bootstrap user", "error", err)
-			os.Exit(1)
+			slog.Error("create bootstrap user", "error", err)
+			return 1
 		}
 	}
 	casbinEnforcer, err := casbinrbac.NewEnforcer(database)
 	if err != nil {
-		logger.Error("initialize Casbin authorization", "error", err)
-		os.Exit(1)
+		slog.Error("initialize Casbin authorization", "error", err)
+		return 1
 	}
 
 	jwtManager := jwtservice.NewJWTManager(
@@ -127,9 +143,10 @@ func main() {
 	apirouter.AuthRouter(api, userRepository, jwtManager, redisClient, casbinEnforcer, configuration.CookieSecure)
 	apirouter.UserRouter(api, userRepository, jwtManager, casbinEnforcer)
 
-	logger.Info("http server starting", "address", configuration.HTTPAddress, "environment", configuration.Environment, "version", version)
+	slog.Info("http server starting", "address", configuration.HTTPAddress, "environment", configuration.Environment, "version", version)
 	if err := router.Run(configuration.HTTPAddress); err != nil {
-		logger.Error("run gin server", "error", err)
-		os.Exit(1)
+		slog.Error("run gin server", "error", err)
+		return 1
 	}
+	return 0
 }

@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 
-	casbinrbac "github.com/DWHuang99/erent/internal/middleware/casbin"
+	casbinrbac "erent/internal/middleware/casbin"
+
 	"github.com/casbin/casbin/v3"
 )
 

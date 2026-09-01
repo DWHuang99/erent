@@ -6,23 +6,25 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `.env` | 本地 Compose 配置，Git 忽略，位于仓库最外层 |
-| `.env.example` | 可提交的根配置模板 |
+| `.env` | 本地 Compose 配置，Git 忽略，位于仓库最外层，包含容器内 `LOG_FILE` 路径 |
+| `.env.example` | 可提交的根配置模板，只包含演示占位值，不保存本地日志路径或真实凭据 |
 | `.scripts/` | 本地 Bash 维护脚本：启动 Compose 后端与 Vite 前端、启动 PostgreSQL 并应用待执行 migration |
-| `docker-compose.yml` | `ai-gateway-go-auth` Stack：PostgreSQL、Redis、一次性 migrate job、单体 API、Gateway |
-| `backend/` | Go module、源码、测试和 Dockerfile |
-| `front/` | Vue 3 + Vite 管理界面，包含登录、受保护首页和认证 API 适配 |
+| `backend/` | Go module、源码、测试、后端 Dockerfile 和本地 Compose Stack |
+| `frontend/` | Vue 3 + Vite 管理界面，以及构建静态产物并由 Nginx 提供服务的生产镜像 |
+| `docs/deployment.md` | 公开源码仓库、GHCR 四镜像和私有 `erent-deploy` 的发布/部署边界 |
 
 旧 `deploy/`、K8s 和移动后空目录已经删除。
 
-`.scripts/start-frontend.sh` 检查 Docker、Node.js、npm 与前端依赖，通过根 Compose 构建并启动 PostgreSQL、migration、Redis、API、Gateway 后启动 `front/` 的 Vite 开发服务器，并兼容在 WSL 中复用 Windows Node.js；`.scripts/update-database.sh` 检查 Docker 可用性，启动 PostgreSQL 后通过 Compose `migrate` job 应用所有待执行版本。
+`.scripts/start.sh` 检查 Docker、Node.js、npm 与前端依赖，显式传入根 `.env` 和 `backend/docker-compose.yml`，构建并启动 PostgreSQL、migration、Redis、API、Gateway、Nginx Web 后启动 `frontend/` 的 Vite 开发服务器，并兼容在 WSL 中复用 Windows Node.js；`.scripts/update-database.sh` 使用同一 Compose 入口启动 PostgreSQL，并通过 `migrate` job 应用所有待执行版本。
 
-## 2. `front`
+## 2. `frontend`
 
 ### 工程入口与路由
 
-- `package.json`、`package-lock.json`：Vue 3、Vue Router、Lucide Vue 与 Vite 依赖，以及 `dev`、`build`、`test`、`preview` 脚本；
+- `package.json`、`package-lock.json`：Vue 3、Vue Router、Axios、Lucide Vue 与 Vite 依赖，以及 `dev`、`build`、`test`、`preview` 脚本；
 - `vite.config.js`：Vue 插件及开发期 `/api`、`/health` 到 `127.0.0.1:8080` 的代理；
+- `Dockerfile`、`.dockerignore`：Node.js stage 以锁文件安装依赖并生成 `dist`，Nginx stage 只携带生产静态产物和运行配置；
+- `nginx.conf`：在容器 `8080` 提供 SPA fallback 和缓存策略，把 `/api/`、`/health/` 代理到 Compose `gateway:8080`，API 代理关闭缓冲并保留客户端转发头；
 - `index.html`、`src/main.js`、`src/App.vue`：单页应用 HTML、Vue 挂载和根路由出口；
 - `src/router/index.js`：`/login`、`/register` 与受保护的 `/` 路由，基于 access token 执行访客/登录态跳转。
 
@@ -32,15 +34,19 @@
 - `src/views/RegisterView.vue`：用户名、注册码、密码确认和使用确认表单；注册成功后返回登录页，不自动建立会话；
 - `src/views/DashboardView.vue`：当前用户、角色、权限、readiness、能力边界、响应式侧栏、主题切换和退出登录；
 - `src/components/AppLogo.vue`：登录页与侧栏共用的 AI Gateway 标识；
-- `src/services/auth.js`：注册、登录、logout、当前用户、access token 存储、Bearer 请求以及一次 refresh/retry；
+- `src/axios/config.js`：Axios 默认超时，以及注入 Bearer access token、解包响应数据的默认拦截器；
+- `src/axios/service.js`：业务请求与 refresh 专用 Axios 实例、Cookie 传输，以及并发共享的单次 401 refresh/retry；
+- `src/axios/index.js`：面向业务 API 的统一 `get`、`post`、`put`、`delete` 请求入口；
+- `src/services/session.js`：access token 的本地/会话存储、用户名记忆、刷新后 token 替换和清理；
+- `src/services/auth.js`：通过 Axios 统一入口实现注册、登录、logout、当前用户、readiness 与业务错误中文映射；
 - `src/styles/main.css`：参考 CLI Proxy API Management Center 的暖白/黑色主题 tokens、全局基础样式与深色主题；
-- `tests/auth.test.js`：覆盖持久/会话 token 保存、登录 401、注册请求合同、重复用户名中文反馈和会话清理。
+- `tests/auth.test.js`：覆盖持久/会话 token 保存、登录 401、注册请求合同、重复用户名中文反馈、会话清理、401 刷新重试与并发刷新合并。
 
 ## 3. `backend/cmd`
 
 ### `api/main.go`
 
-加载配置并连接已由 Compose migration job 初始化的 PostgreSQL 和 Redis，创建 User Repository、Casbin Enforcer 与 JWT Manager。`main` 不执行生产数据库 migration；它校验初始化角色只能是 `user`、`admin`、`test`，创建 `gin.Engine`、注册 `/ping` 与健康检查后调用 `apirouter.AuthRouter`/`UserRouter`，最后 `router.Run(HTTP_ADDR)`。不创建 Handler，也不使用 `http.Server`。Readiness 同时检查 PostgreSQL 和 Redis。
+`main` 只用 `os.Exit(run())` 设置退出码；`run` 初始化并设定全局 logger，随后加载配置并连接已由 Compose migration job 初始化的 PostgreSQL 和 Redis，确保 logger、数据库和 Redis 的延迟关闭会执行，再创建 User Repository、Casbin Enforcer 与 JWT Manager。它不执行生产数据库 migration；它校验初始化角色只能是 `user`、`admin`、`test`，创建 `gin.Engine`、注册 `/ping` 与健康检查后调用 `apirouter.AuthRouter`/`UserRouter`，最后 `router.Run(HTTP_ADDR)`。不创建 Handler，也不使用 `http.Server`。Readiness 同时检查 PostgreSQL 和 Redis。
 
 ### `gateway/main.go`、`main_test.go`
 
@@ -48,7 +54,7 @@
 
 ### `healthcheck/main.go`
 
-容器 readiness 客户端，默认访问 `127.0.0.1:8080/health/ready`。
+distroless 容器 readiness 客户端，默认访问 `127.0.0.1:8080/health/ready`。Dockerfile 将它复制到 API/Gateway 镜像的 `/healthcheck`，Compose 直接执行该客户端；API `main` 暴露被探测端点，二者不能互相替代。
 
 ## 4. `backend/internal/config`
 
@@ -62,7 +68,16 @@
 
 覆盖默认值、覆盖值、Redis DB、Cookie bool、JWT Secret/TTL、非法配置和管理员组合。
 
-## 5. 数据与 DTO
+## 5. `backend/internal/logger`
+
+### `logger.go`、`logger_test.go`
+
+- `NewLogger`：预创建并验证 `LOG_FILE` 指定的文件，返回同时写标准输出和 lumberjack 轮转文件的 JSON `slog.Logger` 以及待关闭资源；空路径默认使用 `./logs/backend/app.log`；
+- `dualWriter`：文件 sink 运行期失败时写入标准错误，同时保持控制台日志可用；
+- 轮转边界：单文件 100 MB、10 个备份、保留 30 天并压缩；
+- 测试覆盖嵌套目录创建、控制台/文件 JSON 双写、不可用目录拒绝和运行期文件错误报告。
+
+## 6. 数据与 DTO
 
 ### `database/connect/connect.go`
 
@@ -82,7 +97,7 @@
 
 `Response`、`Success`、`SuccessWithStatus`、`Error` 统一 `{code,data,message}`；`UserInfo` 是不含密码的当前用户响应。
 
-## 6. HTTP/JWT/Redis/Casbin Middleware
+## 7. HTTP/JWT/Redis/Casbin Middleware
 
 ### `middleware/httpserver/middleware.go`
 
@@ -117,7 +132,7 @@
 - `rotateRefreshTokenScript`：旧 token 删除和新 token 建立的 Lua 原子操作；
 - `refresh_token_test.go`：随机长度、key 隐私、创建/轮换/重放拒绝/删除。
 
-## 7. `modules/auth`
+## 8. `modules/auth`
 
 ### `service.go`
 
@@ -146,7 +161,7 @@ POST /api/v1/auth/logout
 
 使用内存 SQLite 上的真实 GORM User Repository、Casbin Enforcer 与 miniredis，覆盖注册、固定角色、bcrypt、重复用户名、非法请求、登录、角色/首页权限 claims、轮换、旧 token 重放拒绝、logout、错误密码和禁用用户。
 
-## 8. `modules/user`
+## 9. `modules/user`
 
 ### `model.go`
 
@@ -169,22 +184,25 @@ GET /api/v1/users/me
 GET /api/v1/auth/verify
 ```
 
-## 9. `internal/router`
+## 10. `internal/router`
 
 `routerall.go` 的 `AuthRouter`、`UserRouter` 接收具体的 `*user.Repository` 和 Casbin Enforcer，在路由包内创建 Service/Handler 并调用模块 `Register*Routes`。健康检查和 `/ping` 由 `cmd/api` 注册。`routerall_test.go` 使用内存 SQLite 的真实 GORM Repository，覆盖注册、重复用户名、注册后登录、Casbin 首页权限、refresh Cookie、rotation、logout、当前用户、健康、Request ID 和未认证拒绝。
 
-## 10. `internal/testdatabase`
+## 11. `internal/testdatabase`
 
 `database.go` 的 `Open` 为测试创建相互隔离且开启 `TranslateError` 的纯 Go 内存 SQLite 数据库。测试自行对 SQLite 执行 `AutoMigrate`，用于验证真实 GORM Repository 调用链；它不进入生产启动路径，也不替代 PostgreSQL SQL migration。
 
-## 11. 构建与维护
+## 12. 构建与维护
 
 | 文件 | 职责 |
 | --- | --- |
-| `backend/Dockerfile` | 构建 API、Gateway、healthcheck 两个 distroless target |
+| `backend/Dockerfile` | 构建 API、Gateway、healthcheck 两个 distroless target，并提供携带 SQL 的 `migrations` 发布 target；API 镜像为 UID 65532 创建日志目录 |
+| `frontend/Dockerfile`、`nginx.conf` | 构建 Vue `dist`，再生成提供 SPA 静态文件并同源代理 Gateway 的 Nginx Web 镜像 |
+| `backend/docker-compose.yml` | `ai-gateway-go-auth` 本地 Stack：PostgreSQL、Redis、一次性 migrate job、单体 API、Gateway、Web；后端路径相对于 `backend/`，Web context 指向 `../frontend` |
 | `backend/migrations/` | PostgreSQL schema 的版本化 up/down SQL |
 | `backend/.dockerignore` | 限定后端构建上下文 |
-| `backend/go.mod`、`go.sum` | Gin、GORM、Casbin GORM Adapter、JWT、Redis，以及仅用于测试的纯 Go SQLite 依赖 |
-| `.github/workflows/ci.yml` | 以 `backend/` 为 Go working directory，构建 `./backend` Docker context |
+| `backend/go.mod`、`go.sum` | Gin、GORM、Casbin GORM Adapter、JWT、Redis、lumberjack，以及仅用于测试的纯 Go SQLite 依赖 |
+| `.github/workflows/ci.yml` | 分别校验 Go 与 Vue，构建 `backend/` 的 API/Gateway/Migrations targets 和 `frontend/` 的 Web 镜像，全部只验证、不推送 |
+| `.github/workflows/release.yml` | `main`、`v*` tag 或手动触发时向 GHCR 发布 API、Gateway、Migrations、Web 四个同源码版本镜像，附加完整提交 SHA、default-branch `latest` 和 tag 标签 |
 
 维护规则：Handler 不直接访问 GORM；Service 直接依赖具体 Repository；Handler 需要替换 Service 时由 Handler 定义最小接口；Repository 不处理 HTTP/Cookie；refresh token 原值不进入日志或 Redis key；改变路由、模型、配置、测试或目录时同步本文和 `ARCHITECTURE.md`。

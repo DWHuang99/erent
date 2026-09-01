@@ -5,8 +5,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/DWHuang99/erent/internal/dto/response"
-	jwtservice "github.com/DWHuang99/erent/internal/middleware/jwt"
+	"erent/internal/dto/response"
+	jwtservice "erent/internal/middleware/jwt"
+
 	"github.com/gin-gonic/gin"
 )
 

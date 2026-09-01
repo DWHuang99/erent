@@ -5,7 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/DWHuang99/erent/internal/dto/response"
+	"erent/internal/dto/response"
+
 	"github.com/gin-gonic/gin"
 )
 

@@ -5,9 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	casbinrbac "github.com/DWHuang99/erent/internal/middleware/casbin"
-	"github.com/DWHuang99/erent/internal/security"
-	"github.com/DWHuang99/erent/internal/testdatabase"
+	casbinrbac "erent/internal/middleware/casbin"
+	"erent/internal/security"
+	"erent/internal/testdatabase"
+
 	"gorm.io/gorm"
 )
 

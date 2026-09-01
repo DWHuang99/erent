@@ -4,7 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/DWHuang99/erent/internal/testdatabase"
+	"erent/internal/testdatabase"
+
 	"github.com/casbin/casbin/v3"
 	gormadapter "github.com/casbin/gorm-adapter/v3"
 )

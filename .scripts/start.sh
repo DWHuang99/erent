@@ -4,7 +4,9 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 project_dir="$(cd -- "${script_dir}/.." && pwd)"
-frontend_dir="${project_dir}/front"
+frontend_dir="${project_dir}/frontend"
+compose_file="${project_dir}/backend/docker-compose.yml"
+env_file="${project_dir}/.env"
 
 command -v docker >/dev/null 2>&1 || {
   echo "Docker command was not found. Please install Docker Desktop first."
@@ -37,7 +39,7 @@ else
 fi
 
 if [[ ! -d "${frontend_dir}/node_modules" ]]; then
-  echo "Frontend dependencies are missing. Run 'npm install' in the front directory first."
+  echo "Frontend dependencies are missing. Run 'npm install' in the frontend directory first."
   exit 1
 fi
 
@@ -47,10 +49,10 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 echo "Starting backend services..."
-cd "${project_dir}"
-docker compose up -d --build
+docker compose --env-file "${env_file}" -f "${compose_file}" up -d --build
 
 echo "Gateway started: http://127.0.0.1:8080"
+echo "Nginx frontend started (default: http://127.0.0.1:8088)"
 
 if command -v curl >/dev/null 2>&1 \
   && curl --noproxy "*" --connect-timeout 2 --max-time 3 --fail --silent \
