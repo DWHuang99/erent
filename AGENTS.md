@@ -30,19 +30,19 @@
 
 出现以下任一变化时，更新 `CODEBASE.md`：
 
-- 新增、删除、重命名或移动目录、文件、类、接口、枚举或 record。
+- 新增、删除、重命名或移动目录、文件、包、类型或接口。
 - 新增、删除或改变承担业务职责的关键方法。
-- 修改 Controller 路由、Service 职责、Provider Adapter、过滤器或协议适配器。
-- 修改 Entity、Mapper、Mapper XML、SQL 迁移、配置项或测试覆盖范围。
+- 修改 Gin 路由、Handler、Service、Repository、中间件或协议适配器。
+- 修改 GORM model、配置项或测试覆盖范围。
 - 修改常见维护入口，使原有文件或方法索引不再准确。
 
-`CODEBASE.md` 应覆盖全部主代码类型、Mapper XML 和测试类型；构造器、getter、setter 等简单访问器无需逐项记录。
+`CODEBASE.md` 应覆盖全部主代码类型和测试类型；简单访问器无需逐项记录。
 
 ## 提交前检查
 
 完成任务前执行以下检查：
 
-1. 确认新增或重命名的类型、Mapper 和测试能在 `CODEBASE.md` 中找到。
+1. 确认新增或重命名的类型和测试能在 `CODEBASE.md` 中找到。
 2. 确认关键调用链、事务顺序、协议事件和能力边界已反映在 `ARCHITECTURE.md`。
 3. 确认文档使用当前文件名、类名、方法名、接口路径和数据库字段。
 4. 运行与改动范围匹配的测试，并执行 `git diff --check`。

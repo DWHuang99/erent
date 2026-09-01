@@ -2,58 +2,55 @@ name: CI
 
 on:
   push:
-    branches: [develop, main]
+    branches: [rewrite/go-v2, develop, main]
 
   pull_request:
     branches: [develop, main]
-
-  workflow_dispatch:
-    inputs:
-      image_tag:
-        description: Existing two-service image tag to deploy (for example, a commit SHA produced by this workflow)
-        required: true
-        type: string
 
 permissions:
   contents: read
 
 jobs:
   test:
-    name: Maven test
+    name: Go verification
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
+      - name: Set up Go
+        uses: actions/setup-go@v7
         with:
-          distribution: temurin
-          java-version: "21"
-          cache: maven
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
 
-      - name: Run Maven verification
-        run: mvn --batch-mode clean verify
+      - name: Check formatting
+        shell: bash
+        working-directory: backend
+        run: test -z "$(gofmt -l .)"
 
-  docker-images:
-    name: Docker image (${{ matrix.service }})
+      - name: Run static analysis
+        working-directory: backend
+        run: go vet ./...
+
+      - name: Run tests with race detector
+        working-directory: backend
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Build binaries
+        working-directory: backend
+        run: go build ./cmd/...
+
+  docker:
+    name: Docker image (${{ matrix.target }})
     needs: test
-
-    if: github.event_name != 'workflow_dispatch'
-
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: read
-      packages: write
-
     strategy:
-      fail-fast: false
       matrix:
-        service:
-          - gateway-service
-          - core-service
+        target: [api, gateway]
 
     steps:
       - name: Checkout code
@@ -62,202 +59,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Login to GHCR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Normalize GHCR repository name
-        id: image_repo
-        shell: bash
-        run: echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-
-      - name: Build and optionally push Docker image
+      - name: Build image
         uses: docker/build-push-action@v7
         with:
-          context: .
-          file: ./${{ matrix.service }}/Dockerfile
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          tags: ghcr.io/${{ steps.image_repo.outputs.name }}-${{ matrix.service }}:${{ github.sha }}
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
-
-  docker-build:
-    name: Docker build
-    needs: docker-images
-
-    if: github.event_name != 'workflow_dispatch'
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Confirm both service images build
-        run: echo "gateway-service and core-service images built successfully"
-
-  deploy:
-    name: Deploy production
-    needs: [test, docker-build]
-
-    if: >-
-      ${{
-        always() &&
-        needs.test.result == 'success' &&
-        (
-          (
-            github.event_name == 'push' &&
-            github.ref == 'refs/heads/main' &&
-            needs.docker-build.result == 'success'
-          ) ||
-          (
-            github.event_name == 'workflow_dispatch' &&
-            needs.docker-build.result == 'skipped'
-          )
-        )
-      }}
-
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-      packages: read
-
-    timeout-minutes: 30
-
-    environment:
-      name: erent
-      url: http://106.53.192.153:8088/api/health
-
-    concurrency:
-      group: production
-      cancel-in-progress: false
-
-    steps:
-      - name: Configure SSH
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
-        run: |
-          set -eu
-          : "${SSH_PRIVATE_KEY:?Missing SSH_PRIVATE_KEY}"
-          : "${SSH_KNOWN_HOSTS:?Missing SSH_KNOWN_HOSTS}"
-          install -m 700 -d ~/.ssh
-          printf '%b\n' "$SSH_PRIVATE_KEY" \
-            | tr -d '\r' > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keygen -y -f ~/.ssh/id_ed25519 > /dev/null < /dev/null
-          printf '%b\n' "$SSH_KNOWN_HOSTS" \
-            | tr -d '\r' > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-
-      - name: Deploy with Docker Compose
-        env:
-          SSH_HOST: ${{ vars.SSH_HOST }}
-          SSH_USER: ${{ vars.SSH_USER }}
-          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
-          IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || github.sha }}
-          GHCR_USERNAME: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          : "${SSH_HOST:?Missing SSH_HOST}"
-          : "${SSH_USER:?Missing SSH_USER}"
-          : "${DEPLOY_PATH:?Missing DEPLOY_PATH}"
-          : "${IMAGE_TAG:?Missing IMAGE_TAG}"
-          : "${GHCR_USERNAME:?Missing GHCR_USERNAME}"
-          : "${GHCR_TOKEN:?Missing GHCR_TOKEN}"
-
-          if [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
-            echo "Invalid image_tag. Use an existing Docker tag, preferably a commit SHA." >&2
-            exit 1
-          fi
-
-          printf '%s' "$GHCR_TOKEN" |
-            ssh \
-              -i ~/.ssh/id_ed25519 \
-              -o BatchMode=yes \
-              -o IdentitiesOnly=yes \
-              -o StrictHostKeyChecking=yes \
-              "$SSH_USER@$SSH_HOST" "
-            set -eu
-            DOCKER_CONFIG=\$(mktemp -d)
-            export DOCKER_CONFIG
-            trap 'rm -rf \"\$DOCKER_CONFIG\"' EXIT
-            docker login ghcr.io -u '$GHCR_USERNAME' --password-stdin
-
-            cd '$DEPLOY_PATH'
-            git checkout main
-            git -c core.sshCommand='ssh -i /home/deploy/.ssh/erent_github -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes' pull --ff-only origin main
-            sh deploy/prepare-nacos-env.sh .env
-            export IMAGE_TAG='$IMAGE_TAG'
-
-            docker compose \
-              -f docker-compose.yml \
-              -f docker-compose.prod.yml \
-              config --quiet
-
-            docker compose \
-              -f docker-compose.yml \
-              -f docker-compose.prod.yml \
-              pull gateway-service core-service
-
-            docker compose \
-              -f docker-compose.yml \
-              -f docker-compose.prod.yml \
-              up -d --wait --wait-timeout 180 nacos
-
-            docker compose \
-              -f docker-compose.yml \
-              -f docker-compose.prod.yml \
-              up \
-              --no-deps \
-              --force-recreate \
-              --exit-code-from nacos-config-init \
-              nacos-config-init
-
-            docker compose \
-              -f docker-compose.yml \
-              -f docker-compose.prod.yml \
-              up -d --no-build --remove-orphans
-
-            docker compose \
-              -f docker-compose.yml \
-              -f docker-compose.prod.yml \
-              ps
-
-            docker compose \
-              -f docker-compose.yml \
-              -f docker-compose.prod.yml \
-              exec -T nginx nginx -t
-
-            docker compose \
-              -f docker-compose.yml \
-              -f docker-compose.prod.yml \
-              exec -T nginx nginx -s reload
-
-            curl -fsS \
-              --retry 24 \
-              --retry-delay 5 \
-              --retry-all-errors \
-              http://127.0.0.1:8088/api/health || {
-                docker compose \
-                  -f docker-compose.yml \
-                  -f docker-compose.prod.yml \
-                  logs --tail=150 gateway-service core-service nacos nginx
-                exit 1
-              }
-          "
-
-      - name: Verify public Nginx endpoint
-        env:
-          SSH_HOST: ${{ vars.SSH_HOST }}
-        run: |
-          set -euo pipefail
-          : "${SSH_HOST:?Missing SSH_HOST}"
-          curl -fsS \
-            --retry 12 \
-            --retry-delay 5 \
-            --retry-all-errors \
-            "http://${SSH_HOST}:8088/api/health"
+          context: ./backend
+          target: ${{ matrix.target }}
+          push: false
+          tags: ai-gateway-${{ matrix.target }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}

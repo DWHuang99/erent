@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>控制台 - AI Gateway</title>
+    <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+    <div class="app-layout">
+        <!-- 遮罩层：仅移动端打开侧栏时可见 -->
+        <div class="sidebar-backdrop" data-sidebar-backdrop></div>
+
+        <!-- 侧栏：桌面端常驻显示，移动端为覆盖式抽屉 -->
+        <aside class="sidebar" data-sidebar>
+            <div class="sidebar-brand">
+                <span class="logo-dot"></span>
+                <span>AI Gateway</span>
+            </div>
+            <nav class="sidebar-nav">
+                <div class="sidebar-section-title">概览</div>
+                <a class="sidebar-link active"><span class="icon">🏠</span>仪表盘</a>
+                <a class="sidebar-link"><span class="icon">📊</span>用量统计</a>
+
+                <div class="sidebar-section-title">管理</div>
+                <a class="sidebar-link"><span class="icon">🔑</span>API Key</a>
+                <a class="sidebar-link"><span class="icon">🧩</span>Provider 配置</a>
+                <a class="sidebar-link"><span class="icon">💳</span>账单与计费</a>
+                <a class="sidebar-link"><span class="icon">📜</span>调用日志</a>
+
+                <div class="sidebar-section-title">系统</div>
+                <a class="sidebar-link"><span class="icon">👤</span>用户管理</a>
+                <a class="sidebar-link"><span class="icon">⚙️</span>系统设置</a>
+            </nav>
+            <div class="sidebar-footer">
+                <span class="avatar"></span>
+                <div>
+                    <span class="user-name">Admin</span>
+                    <span class="user-role">管理员</span>
+                </div>
+            </div>
+        </aside>
+
+        <div class="main-content">
+            <header class="topbar">
+                <div class="topbar-left">
+                    <button class="sidebar-toggle-btn" data-sidebar-toggle aria-label="展开/收起侧栏">☰</button>
+                    <span class="topbar-title">仪表盘</span>
+                </div>
+                <div class="topbar-right">
+                    <button class="sidebar-toggle-btn" aria-label="通知">🔔</button>
+                    <div class="topbar-user">
+                        <span class="avatar"></span>
+                        <span>Admin</span>
+                    </div>
+                </div>
+            </header>
+
+            <main class="content-area">
+                <section class="stat-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">今日请求数</div>
+                        <div class="stat-value">12,480</div>
+                        <div class="stat-trend">▲ 8.2% 较昨日</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">今日消耗 Token</div>
+                        <div class="stat-value">3.2M</div>
+                        <div class="stat-trend">▲ 4.1% 较昨日</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">今日费用</div>
+                        <div class="stat-value">¥186.50</div>
+                        <div class="stat-trend down">▼ 2.6% 较昨日</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">活跃 API Key</div>
+                        <div class="stat-value">24</div>
+                        <div class="stat-trend">▲ 2 个新增</div>
+                    </div>
+                </section>
+
+                <section class="panel-grid">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <h3>调用趋势</h3>
+                            <span class="badge success">近 7 天</span>
+                        </div>
+                        <div class="panel-placeholder-chart">图表占位区域</div>
+                    </div>
+                    <div class="panel">
+                        <div class="panel-header">
+                            <h3>最近活动</h3>
+                        </div>
+                        <ul class="activity-list">
+                            <li class="activity-item">
+                                <span class="dot"></span>
+                                <div>
+                                    <div>API Key「prod-key-01」创建成功</div>
+                                    <div class="activity-time">2 分钟前</div>
+                                </div>
+                            </li>
+                            <li class="activity-item">
+                                <span class="dot"></span>
+                                <div>
+                                    <div>Provider「OpenAI」限流触发</div>
+                                    <div class="activity-time">18 分钟前</div>
+                                </div>
+                            </li>
+                            <li class="activity-item">
+                                <span class="dot"></span>
+                                <div>
+                                    <div>用户 zhang.san 登录系统</div>
+                                    <div class="activity-time">1 小时前</div>
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+                </section>
+
+                <section class="panel" style="margin-top: 16px;">
+                    <div class="panel-header">
+                        <h3>API Key 列表</h3>
+                        <button class="btn-primary" style="width: auto; padding: 8px 16px;">新建 Key</button>
+                    </div>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>名称</th>
+                                <th>Key</th>
+                                <th>状态</th>
+                                <th>今日调用</th>
+                                <th>创建时间</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>prod-key-01</td>
+                                <td>sk-****************ab12</td>
+                                <td><span class="badge success">正常</span></td>
+                                <td>4,820</td>
+                                <td>2026-06-12</td>
+                            </tr>
+                            <tr>
+                                <td>test-key-02</td>
+                                <td>sk-****************cd34</td>
+                                <td><span class="badge warning">接近限额</span></td>
+                                <td>1,203</td>
+                                <td>2026-06-30</td>
+                            </tr>
+                            <tr>
+                                <td>legacy-key-03</td>
+                                <td>sk-****************ef56</td>
+                                <td><span class="badge danger">已禁用</span></td>
+                                <td>0</td>
+                                <td>2026-01-08</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </section>
+            </main>
+        </div>
+    </div>
+
+    <script src="assets/app.js"></script>
+</body>
+</html>
