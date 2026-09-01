@@ -1,229 +1,212 @@
-# AI Gateway
+# AI Gateway Go V2
 
-AI Gateway 是一个用于学习 AI API 聚合、用量计费和 Spring Cloud 工程化的项目。当前版本已经从单个 Spring Boot 进程调整为一个最小、可部署的双服务结构：
+Go 后端现在位于独立的 `backend/`，采用与 `D:/vue-element-plus-admin/backend` 相同方向的模块化单体分层：DTO、Middleware、Auth/User Handler-Service-Repository、总 Router 和进程装配彼此分离。数据库访问使用 GORM；多个业务服务、gRPC、JWKS、OIDC 和 OAuth 均未引入。
 
-```text
-Client
-  -> Nginx
-  -> gateway-service（Spring Cloud Gateway / WebFlux）
-  -> Nacos 发现 core-service
-  -> core-service（Spring MVC + 原有业务）
-  -> MySQL / Redis / RabbitMQ / AI Provider
-```
-
-这次拆分的目标是先建立真实的服务注册、发现、配置和网关调用链，而不是一次性把所有业务拆成大量小服务。
-
-## 当前能力
-
-- 用户注册、登录、JWT 与平台 API Key 管理
-- Provider Key 加密保存、调度、调用前故障切换和健康状态维护
-- OpenAI Chat Completions、Anthropic Messages、OpenAI Responses 兼容接口
-- HTTP SSE 与 Responses WebSocket 流式调用
-- 请求日志、Token 用量、价格计算、钱包并发扣减和幂等
-- Redis 固定窗口限流
-- RabbitMQ 请求完成与用量事件骨架
-- Nacos 服务注册、发现和非敏感配置加载
-- Nginx 单一公网入口
-- Prometheus / Grafana 基础监控
-- GitHub Actions 自动测试、构建双镜像和 Linux 部署
-
-## 服务边界
-
-| 模块 | 运行时服务 | 职责 |
-| --- | --- | --- |
-| `gateway-service` | `gateway-service` | 公网 API 路由、服务发现、HTTP/SSE/WebSocket 转发、请求 ID 生成与透传、清理客户端伪造的内部 Header |
-| `core-service` | `core-service` | 鉴权、限流、用户、API Key、Provider 调用、SSE/WebSocket 业务、用量、计费、MyBatis、RabbitMQ |
-
-Provider、Billing 和 User 暂时没有继续拆分：
-
-- Provider 调用包含原始请求透传、调用前 Key failover、SSE/WebSocket 生命周期和流结束计费，当前还没有稳定的跨服务协议。
-- Billing 同时更新钱包、请求日志、用量、流水和幂等状态，依赖一个本地数据库事务。
-- 用户注册同时创建用户、角色关系和钱包。
-
-如果现在强行拆开，会立刻引入分布式事务、跨服务幂等和复杂流式协议，却不会明显改善当前项目。后续应先明确数据归属和接口契约，再逐个拆分。
-
-## 技术版本
-
-- JDK 21
-- Spring Boot 3.5.16
-- Spring Cloud 2025.0.3
-- Spring Cloud Alibaba 2025.0.0.0
-- Nacos 3.2.3
-- MyBatis 3.0.5
-- MySQL 8.4
-- Redis 7.4
-- RabbitMQ 4
-- Maven 多模块
-
-根 `pom.xml` 通过 Spring Cloud、Spring Cloud Alibaba 和 Testcontainers BOM 统一管理兼容版本。不要在子模块中单独覆盖 Spring Cloud 组件版本。
-
-## 项目结构
+## 仓库布局
 
 ```text
 ai-gateway/
-├─ pom.xml                         Maven 聚合父工程和依赖 BOM
-├─ gateway-service/
-│  ├─ Dockerfile
-│  ├─ pom.xml
-│  └─ src/
-├─ core-service/
-│  ├─ Dockerfile
-│  ├─ pom.xml
-│  └─ src/
-├─ deploy/
-│  ├─ prepare-nacos-env.sh         生成 Nacos 随机认证参数
-│  └─ nacos/
-│     ├─ publish-config.sh         一次性发布 Data ID
-│     └─ config/                   两个服务的非敏感配置
-├─ nginx/                          HTTP 入口与 HTTPS 示例
-├─ monitoring/                     Prometheus 配置
-├─ sql/                            全量建库与增量脚本
-├─ docker-compose.yml
-├─ docker-compose.prod.yml
-├─ ARCHITECTURE.md
-├─ CODEBASE.md
-└─ docs/
+├─ backend/              # 完整 Go module 和 Dockerfile
+│  ├─ cmd/
+│  ├─ internal/
+│  ├─ migrations/         # PostgreSQL 版本化 up/down migration
+│  ├─ docker-compose.yml  # 后端、基础设施与 Nginx Web 本地 Stack
+│  ├─ go.mod
+│  └─ go.sum
+├─ frontend/             # Vue 3 + Vite 源码及 Nginx 生产镜像
+├─ docs/
+│  └─ deployment.md      # 公开发布与私有部署边界
+├─ .env                  # 本地 Compose 配置，位于最外层且不提交
+└─ .env.example          # 可提交的配置示例
 ```
 
-## 配置约定
+仓库不再包含 K8s 或旧部署目录。
 
-两个服务都通过 Nacos 注册和发现。配置中心默认使用以下配置：
+## 当前认证与授权能力
 
-| Service | Data ID | Group |
+- GORM + PostgreSQL 用户表与初始化管理员；
+- bcrypt 用户名密码登录；
+- 注册流程固定创建 `user` 角色，成功返回 `201`，重复用户名返回 `409`；
+- Casbin RBAC 使用 GORM Adapter 持久化到 PostgreSQL；
+- 当前只支持 `user`、`admin`、`test` 三种角色，三者都只有 `dashboard:view`（查看首页）权限；
+- 本地 HS256 access JWT，不提供 JWKS；
+- Redis refresh token，Redis key 只保存原 token 的 SHA-256；
+- refresh token 通过 HttpOnly、SameSite=Lax Cookie 返回；
+- refresh 时原子删除旧 token 并创建新 token，旧 token 不能重放；
+- logout 删除 Redis token，且没有 Cookie 时仍幂等成功；
+- 登录和 refresh 会把 Casbin 计算出的角色、权限写入 access JWT；
+- `/users/me` 和 `/auth/verify` 经 JWT Filter 后回查数据库，并返回 Casbin 角色与权限；
+- Gateway 只代理唯一单体 API。
+
+当前路由：
+
+| 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `gateway-service` | `gateway-service.yml` | `AI_GATEWAY` |
-| `core-service` | `core-service.yml` | `AI_GATEWAY` |
+| `POST` | `/api/v1/auth/login` | 返回 access token，并设置 refresh Cookie |
+| `POST` | `/api/v1/auth/register` | 注册本地 `user` 用户，不允许客户端选择角色 |
+| `POST` | `/api/v1/auth/refresh` | 轮换 refresh Cookie，返回新 access token |
+| `POST` | `/api/v1/auth/logout` | 删除 refresh token 并清除 Cookie |
+| `GET` | `/api/v1/users/me` | Bearer JWT 验证并返回当前用户 |
+| `GET` | `/api/v1/auth/verify` | 当前用户验证兼容入口 |
+| `GET` | `/health/live` | 进程 liveness |
+| `GET` | `/health/ready` | API 检查 PostgreSQL 和 Redis；Gateway 代理该结果 |
 
-Nacos 只适合保存可公开给应用进程的非敏感运行参数，例如超时、限流和 Provider failover 次数。以下内容必须由服务器环境变量或受保护的 CI/CD Secret 注入：
+## Compose 启动
 
-- `MYSQL_ROOT_PASSWORD`
-- `DB_PASSWORD`
-- `RABBITMQ_PASSWORD`
-- `JWT_SECRET`
-- `JASYPT_PASSWORD`
-- `GRAFANA_ADMIN_PASSWORD`
-- Provider API Key
-
-尤其要保持 `JASYPT_PASSWORD` 稳定；改变它以后，数据库里既有的加密 Provider Key 将无法解密。
-
-## 本地运行
-
-首次使用先从示例创建本地环境文件，并替换所有占位值：
+根目录已经放置本地 `.env`，Compose 会自动读取：
 
 ```powershell
-Copy-Item .env.example .env
+docker compose --env-file .env -f backend/docker-compose.yml up --build -d
+docker compose --env-file .env -f backend/docker-compose.yml ps -a
 ```
 
-Linux 上也可以用 `deploy/prepare-nacos-env.sh .env` 向现有 `.env` 追加缺失的 Nacos 认证参数和 Grafana 管理密码。脚本不会覆盖已经存在的值；生产覆盖文件会拒绝缺少核心数据库、RabbitMQ、JWT、Jasypt 或 Grafana 密钥的部署。
+[backend/docker-compose.yml](backend/docker-compose.yml) 是本地 Compose Stack，名称为 `ai-gateway-go-auth`。命令显式使用根 `.env`；API/Gateway 构建上下文和 migration 路径相对于 `backend/`，Web 构建上下文指向同级 `frontend/`。启动顺序为 PostgreSQL healthy → `migrate` 执行完成 → API healthy → Gateway healthy → Nginx Web；Redis 与 migration 并行准备。`migrate` 正常完成后显示为 `Exited (0)`，这是一次性任务的预期状态。
 
-启动完整环境：
+API 日志以 JSON 同时写入 Docker 标准输出和 `/var/log/ai-gateway/app.log`。文件位于持久化的 `api-logs` named volume，单文件上限 100 MB，最多保留 10 个备份和 30 天并压缩。查看实时日志仍优先使用：
 
 ```powershell
-docker compose up -d --build
-docker compose ps
+docker compose --env-file .env -f backend/docker-compose.yml logs -f api gateway web
 ```
 
-验证公网入口对应的本地链路：
+`cmd/healthcheck` 是 distroless 镜像内执行的 HTTP 探测客户端，负责请求 API `main` 暴露的 `/health/ready`；它不是重复的健康检查接口。
 
-```powershell
-curl.exe --noproxy "*" http://localhost:8088/api/health
-```
-
-查看关键服务日志：
-
-```powershell
-docker compose logs -f gateway-service core-service nacos nginx
-```
-
-只运行测试：
-
-```powershell
-mvn clean verify
-```
-
-分别启动某个模块：
-
-```powershell
-mvn -pl core-service spring-boot:run
-mvn -pl gateway-service spring-boot:run
-```
-
-直接用 Maven 启动时，需要先准备 MySQL、Redis、RabbitMQ 和 Nacos，并设置：
+版本文件位于 `backend/migrations/`，由 `migrate/migrate:v4.19.1` 执行；执行版本记录在 PostgreSQL 的 `schema_migrations` 表。API 不再运行 `AutoMigrate`，数据库结构变更必须新增成对的 `*.up.sql`、`*.down.sql`。当前版本：
 
 ```text
-NACOS_SERVER_ADDR
-NACOS_DISCOVERY_ENABLED=true
-NACOS_CONFIG_ENABLED=true
+000001_users
+000002_casbin_rbac
 ```
 
-`gateway-service` 使用 `lb://core-service` 路由，因此没有 Nacos 或等价的服务实例列表时，它不能找到核心服务。
+PostgreSQL 已运行时可单独应用尚未执行的版本：
 
-## 路由与请求 ID
-
-Nginx 把以下业务路径交给 `gateway-service`：
-
-```text
-/api/**
-/v1/**
-/chat/**
-/responses/**
-/backend-api/codex/**
+```powershell
+docker compose --env-file .env -f backend/docker-compose.yml run --rm migrate
 ```
 
-网关会：
-
-1. 接受符合 `[A-Za-z0-9._:-]+` 且不超过 128 字符的 `X-Request-Id`；
-2. 缺失或不合法时生成 UUID；
-3. 删除客户端传入的 `X-Internal-Token` 和 `X-User-Id`；
-4. 把 `X-Request-Id` 传给 `core-service` 并写回响应。
-
-`core-service` 把该值放入 MDC，所以可以用同一个请求 ID 串联网关响应与核心服务日志。
-
-## Linux 部署与 CI/CD
-
-当前测试服务器入口：
-
-```text
-http://106.53.192.153:8088
-```
-
-CI/CD 行为：
-
-1. `develop`、`main` 的 push 和 Pull Request 执行 `mvn clean verify`；
-2. `main` 测试通过后分别构建并推送两个镜像：
-   - `ghcr.io/hdw123456/erent-gateway-service:<commit-sha>`
-   - `ghcr.io/hdw123456/erent-core-service:<commit-sha>`
-3. 经 GitHub Environment `erent` 审批后，通过 SSH 在 `/opt/ai-gateway` 更新 Compose；
-4. 校验并重载 Nginx；
-5. 同时检查服务器本机和公网健康接口。
-
-验证：
+也可以在 Git Bash 或 WSL 中从仓库根目录运行数据库更新脚本；脚本会先启动 PostgreSQL，再应用所有待执行版本：
 
 ```bash
-curl -fsS http://127.0.0.1:8088/api/health
-curl -fsS http://106.53.192.153:8088/api/health
+bash .scripts/update-database.sh
 ```
 
-回滚时在 GitHub Actions 手动运行 `CI` 工作流，填写一个以前成功发布过的 commit SHA 作为 `image_tag`。工作流会让两个服务使用同一个标签，避免网关和核心服务版本错配。
+默认开放两个仅本机可访问的入口：`http://127.0.0.1:8080` 直达 Gateway，便于 API 调试；`http://127.0.0.1:8088` 由 Nginx 提供生产构建后的 Vue 页面，并将 `/api`、`/health` 同源代理到 Gateway。当前 `.env` 使用开发凭据，部署前必须修改管理员密码、PostgreSQL 密码和 `JWT_SECRET`。
 
-更完整的 Nginx、SSE、WebSocket、部署和回滚命令见 [docs/nginx-deployment.md](docs/nginx-deployment.md)。
+完整登录、刷新和注销示例：
 
-## 网络安全边界
+```powershell
+$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 
-公网只应开放 Nginx 的 `8088`（正式启用域名和 HTTPS 后改为 `80/443`）。以下服务只在 Docker 内部网络或宿主机回环地址访问，不能直接暴露公网：
+$login = Invoke-RestMethod `
+  -Method Post `
+  -Uri 'http://127.0.0.1:8080/api/v1/auth/login' `
+  -ContentType 'application/json' `
+  -Body '{"username":"admin","password":"admin12345"}' `
+  -WebSession $session
 
-- MySQL
-- Redis
-- RabbitMQ AMQP 与管理端
-- Nacos 客户端端口与控制台
-- `gateway-service`
-- `core-service`
-- Prometheus / Grafana 管理入口
+Invoke-RestMethod `
+  -Uri 'http://127.0.0.1:8080/api/v1/users/me' `
+  -Headers @{ Authorization = "Bearer $($login.data.accessToken)" }
 
-## 当前限制
+$refreshed = Invoke-RestMethod `
+  -Method Post `
+  -Uri 'http://127.0.0.1:8080/api/v1/auth/refresh' `
+  -WebSession $session
 
-- `RefreshTokenService` 仍把 Refresh Token 保存在单进程内存中，因此 `core-service` 暂时只能运行一个副本；进程重启后旧 Refresh Token 失效。
-- RabbitMQ 发布位于核心数据库事务提交之后，目前是 best-effort。Broker 故障时核心调用仍可成功，但事件可能丢失；后续使用 Transactional Outbox 解决。
-- Nacos 当前是 standalone 单节点，适合学习和单机预发布，不具备高可用能力。
-- Provider、Billing、User 仍共享 `core-service` 和一个数据库，这是为了保留当前本地事务与流式契约。
-- HTTPS 示例尚不代表证书已经部署；公网正式使用前必须配置域名、证书、强密码、备份和防火墙。
+Invoke-RestMethod `
+  -Method Post `
+  -Uri 'http://127.0.0.1:8080/api/v1/auth/logout' `
+  -WebSession $session
+```
+
+注册请求沿用原后端合同；当前只检查 `code` 非空，尚未接入验证码发送或校验服务：
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri 'http://127.0.0.1:8080/api/v1/auth/register' `
+  -ContentType 'application/json' `
+  -Body '{"username":"new-user","password":"password123","check_password":"password123","code":"123456","iAgree":true}'
+```
+
+## 前端开发
+
+Vue 3 管理界面位于与 `backend/` 同级的 `frontend/`。开发服务器会把 `/api` 和 `/health` 请求代理到本机 `127.0.0.1:8080`，因此先启动后端，再启动前端：
+
+前端 HTTP 请求统一使用 `frontend/src/axios/` 下的 Axios 模块：`config.js` 定义默认拦截器，`service.js` 管理实例和 token 刷新，`index.js` 提供业务请求入口。请求拦截器注入 access token，响应拦截器在 `401` 时共享一次 refresh 请求并重试原请求；refresh token 仍只通过 HttpOnly Cookie 传输。
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+已安装前端依赖后，也可以在 Git Bash 或 WSL 中从仓库根目录一并启动前后端。脚本会显式使用根 `.env` 和 `backend/docker-compose.yml` 启动后端，再以前台进程启动 Vite；按 `Ctrl+C` 只停止前端，后端容器继续运行。脚本兼容在 WSL 中复用 Windows Node.js 和 `node_modules`：
+
+```bash
+bash .scripts/start.sh
+```
+
+浏览器访问 `http://127.0.0.1:5173/login`。登录页可进入 `/register` 创建账号；注册成功后会返回登录页、回填新用户名并显示成功提示，但不会自动登录。登录成功后自动进入首页；未登录访问首页会返回登录页。生产构建和前端测试：
+
+```powershell
+npm run build
+npm test
+```
+
+生产构建使用同源 `/api/v1` 与 `/health` 路径。`frontend/Dockerfile` 先通过 Node.js 构建 `dist`，再生成只包含静态产物和运行配置的 Nginx 镜像；`frontend/nginx.conf` 为 Vue Router 提供 SPA fallback，把 `/api/`、`/health/` 转发到 Compose 网络内的 `gateway:8080`，并为 `/assets/` 设置长期缓存。执行前述 Compose 启动命令后可直接访问：
+
+```text
+http://127.0.0.1:8088/login
+```
+
+Vite 的 `5173` 入口仍用于开发热更新，Nginx 的 `8088` 入口用于验证生产构建和同源代理。后续私有部署仓库可以直接引用 Web 镜像，无需在生产服务器安装 Node.js。
+
+## 镜像发布与私有部署
+
+公开仓库的 `.github/workflows/release.yml` 在 `main` push、`v*` tag 或手动运行时发布四个 GHCR 镜像：
+
+```text
+ghcr.io/dwhuang99/erent-api:<source-sha>
+ghcr.io/dwhuang99/erent-gateway:<source-sha>
+ghcr.io/dwhuang99/erent-migrations:<source-sha>
+ghcr.io/dwhuang99/erent-web:<source-sha>
+```
+
+生产部署位于私有仓库 [DWHuang99/erent-deploy](https://github.com/DWHuang99/erent-deploy)。私有 CD 手动接收同一个完整源码 SHA，拉取四个不可变镜像、执行匹配版本的 migration、启动 Stack 并验证 Nginx → Gateway → API readiness。生产 `.env`、SSH key、服务器地址和审批规则均不进入本公开仓库；配置步骤见 [docs/deployment.md](docs/deployment.md)。
+
+## 配置
+
+`.env` 和 `.env.example` 位于仓库最外层。`.env` 是不提交的本地 Compose 配置；`.env.example` 只提供可提交的演示占位值，不保存本地日志路径或真实凭据。重要变量：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `WEB_PORT` | `8088` | Nginx Web 容器绑定到宿主机回环地址的端口 |
+| `LOG_FILE` | 未设置时 `./logs/backend/app.log` | 根 `.env` 为 Compose 设置 `/var/log/ai-gateway/app.log`，并写入持久化 volume |
+| `JWT_SECRET` | 无默认值 | 根 `.env` 中必填的 HS256 随机密钥，至少 32 字符 |
+| `JWT_ACCESS_TTL` | `15m` | access token 有效期 |
+| `JWT_REFRESH_TTL` | `168h` | refresh token 与 Cookie 有效期 |
+| `COOKIE_SECURE` | `false` | HTTPS 部署时必须设为 `true` |
+| `REDIS_ADDR` | `localhost:6379` | 本地直接运行时的 Redis 地址 |
+| `REDIS_DB` | `0` | refresh token Redis DB |
+| `BOOTSTRAP_ADMIN_USERNAME` | `admin` | 首次启动创建的管理员 |
+| `BOOTSTRAP_ADMIN_ROLE` | `admin` | 初始化用户角色，只允许 `user`、`admin`、`test` |
+
+Compose 内部会将 API 的数据库和 Redis 地址覆盖为 `postgres:5432` 与 `redis:6379`。
+
+## 后端开发
+
+Go module 位于 `backend/`：
+
+```powershell
+go -C backend test ./...
+go -C backend vet ./...
+go -C backend build ./cmd/...
+```
+
+直接运行 API 需要本机已有 PostgreSQL、Redis，目标数据库已应用 `backend/migrations`，并把根 `.env` 的变量导入当前进程：
+
+```powershell
+go -C backend run ./cmd/api
+```
+
+架构边界见 [ARCHITECTURE.md](ARCHITECTURE.md)，文件索引见 [CODEBASE.md](CODEBASE.md)。
