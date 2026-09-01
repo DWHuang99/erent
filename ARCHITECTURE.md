@@ -1,386 +1,198 @@
-# AI Gateway Architecture
+# AI Gateway Go V2 Architecture
 
-本文描述 `ai-gateway` 当前的服务边界、依赖方向、调用链、数据一致性和部署形态。具体文件与维护入口见 [CODEBASE.md](CODEBASE.md)。
+本文描述 `rewrite/go-v2` 当前实际架构。Go module 位于 `backend/`，参考 `D:/vue-element-plus-admin/backend` 的模块化分层，但所有业务模块装配到同一个 API 进程；数据库 Repository 使用 GORM。
 
-## 1. 架构目标
-
-当前版本不是把单体平均切成多个进程，而是先提取一个独立的边缘网关：
-
-```text
-模块化单体
-  -> 提取 gateway-service
-  -> 保留 core-service 内的强一致业务
-  -> 通过 Nacos 完成注册、发现和配置
-```
-
-这一步主要解决：
-
-- 客户端只有一个稳定入口；
-- 路由和业务实现分离；
-- HTTP、SSE、WebSocket 都能按服务名转发；
-- 具备真实的服务注册、发现和配置中心实践；
-- 两个服务可以独立构建、发布和观察；
-- 不破坏现有计费事务与流式调用语义。
-
-## 2. 总体结构
+## 1. 运行拓扑
 
 ```mermaid
 flowchart LR
-    Client["API Client / Browser"]
-    Nginx["Nginx\npublic :8088"]
-    Gateway["gateway-service\nWebFlux :8080"]
-    Nacos["Nacos 3\nservice discovery + config"]
-    Core["core-service\nSpring MVC :8081"]
-    MySQL[(MySQL)]
-    Redis[(Redis)]
-    Rabbit[(RabbitMQ)]
-    Provider["AI Provider"]
-    Prometheus["Prometheus"]
-    Grafana["Grafana"]
-
-    Client --> Nginx --> Gateway
-    Gateway <-.register / discover / config.-> Nacos
-    Core <-.register / config.-> Nacos
-    Gateway -->|"lb://core-service"| Core
-    Core --> MySQL
-    Core --> Redis
-    Core --> Rabbit
-    Core --> Provider
-    Prometheus --> Gateway
-    Prometheus --> Core
-    Grafana --> Prometheus
+    Browser[Browser] --> Web[Nginx + Vue 3 dist]
+    Web -->|/api and /health| Gateway[Gateway]
+    Client[API Client] --> Gateway
+    Gateway --> API[Monolithic API]
+    API --> PostgreSQL[(PostgreSQL users + Casbin policy)]
+    API --> Redis[(Redis refresh sessions)]
+    API --> Logs[(api-logs rotating JSON files)]
+    Migrations[backend/migrations] --> Migrator[One-shot migrate job]
+    Migrator --> PostgreSQL
+    Migrator -. completed successfully .-> API
 ```
 
-运行时只有 Nginx 对公网提供业务入口。`gateway-service`、`core-service`、Nacos、MySQL、Redis 和 RabbitMQ 位于 Docker 内部网络；管理端口最多绑定到宿主机回环地址。
+`backend/docker-compose.yml` 定义名为 `ai-gateway-go-auth` 的本地 Stack，只有一个业务 API，并包含 PostgreSQL、Redis、migration、Gateway 与 Web 容器。Gateway 是无状态单上游代理，不持有身份或业务数据；`migrate` 是一次性 schema job；API 的轮转文件日志保存在 `api-logs` named volume。Web 容器等待 Gateway healthy 后启动，并把宿主机 `WEB_PORT` 绑定到容器 `8080`。Compose 显式读取仓库根 `.env`；后端构建上下文与 migration 挂载路径相对于 `backend/`，Web 构建上下文是同级 `frontend/`。后端 Dockerfile 还提供继承 `migrate/migrate` 且携带版本化 SQL 的 `migrations` 发布 target。当前没有 K8s 配置、微服务、gRPC、服务发现、JWKS、OIDC 或 OAuth。
 
-## 3. 服务职责与依赖方向
+`frontend/` 是与 `backend/` 同级的独立 Vue 3 + Vite 单页管理界面。开发服务器把 `/api` 与 `/health` 代理到 `127.0.0.1:8080`；生产镜像以 Node.js stage 执行 `npm ci`/`npm run build`，再由 Nginx 在 `8080` 提供 `dist`。Nginx 对普通页面使用 `try_files` 回退到 `index.html`，对指纹化 `/assets/` 使用长期缓存，并把 `/api/`、`/health/` 同源代理到 `gateway:8080`；API 代理关闭响应缓冲并放宽读取超时，为后续流式响应保留传输边界。前端通过 `frontend/src/axios/` 下的共享 Axios 模块消费后端公开 HTTP 合同，不直接访问 PostgreSQL 或 Redis。
 
-### 3.1 `gateway-service`
-
-`gateway-service` 是 Spring Cloud Gateway WebFlux 应用，负责：
-
-- 匹配对外业务路径；
-- 从 Nacos 发现 `core-service` 实例；
-- 使用 Spring Cloud LoadBalancer 转发请求；
-- 保持 HTTP、SSE 和 WebSocket 协议语义；
-- 生成、校验和透传 `X-Request-Id`；
-- 删除来自公网的 `X-Internal-Token`、`X-User-Id`，避免伪造内部身份；
-- 暴露独立的健康检查和 Prometheus 指标。
-
-它不访问数据库，不保存用户、API Key 或钱包数据，也不负责业务鉴权和计费。
-
-### 3.2 `core-service`
-
-`core-service` 是原有 Spring MVC 业务应用，负责：
-
-- 用户、角色、JWT、Refresh Token；
-- 平台 API Key 和 Provider Key；
-- API Key/JWT 鉴权与 Redis 限流；
-- 模型、价格、Provider Key 调度和 failover；
-- OpenAI、Anthropic、Responses 请求适配；
-- 上游 HTTP/SSE 调用和 Responses WebSocket 会话；
-- 幂等、请求日志、用量、钱包扣费和流水；
-- RabbitMQ 事件发布与消费者骨架；
-- MyBatis 与全部当前业务表；
-- 独立健康检查和 Prometheus 指标。
-
-当前依赖方向：
+## 2. 后端分层
 
 ```text
-Nginx
-  -> gateway-service
-  -> core-service
-  -> MySQL / Redis / RabbitMQ / Provider
+backend/cmd/api
+  -> internal/logger
+  -> gin.Engine.Run
+  -> internal/router.AuthRouter / UserRouter
+       -> modules/auth/routes -> handler -> service
+       -> modules/user/routes -> handler -> service -> repository
+       -> middleware/jwt
+       -> middleware/casbin
+       -> middleware/httpserver
+  -> database/connect
+  -> middleware/redis
 ```
 
-禁止让 `core-service` 回调 `gateway-service`。服务发现只用于网关找到核心服务，不启用按服务名自动暴露路由的 Discovery Locator。
+启动约定对齐 `vue-element-plus-admin/backend/cmd/api/main.go`：
 
-## 4. 为什么暂时不继续拆分
+- Compose 先等待 PostgreSQL healthy，再执行全部未应用的 SQL migration；只有 `migrate` 成功退出后才启动 API；
+- `cmd/api` 先初始化 JSON logger 并预检日志文件，再加载配置，连接已迁移的 PostgreSQL/Redis，初始化 User Repository、Casbin Enforcer 和 JWT Manager，创建 `gin.Engine`、注册 `/ping` 与健康检查，然后调用 `AuthRouter`/`UserRouter`，最后 `router.Run(HTTP_ADDR)`；
+- API 直接通过 Gin Engine 的 `router.Run(HTTP_ADDR)` 启动；Gateway 仍使用标准库 `http.Server` 承担反向代理；
+- Handler 不在 `main` 创建，由 `internal/router` 组装 `NewService`、`New*Handler` 并调用模块 `Register*Routes`。
 
-### 4.1 Provider 暂不独立
+职责边界：
 
-一次 Provider 调用不仅是普通 HTTP 转发，还包含：
+- Router：总路由和模块路由装配，并在此创建 Handler；
+- Handler：JSON/Cookie/Gin Context 与 HTTP 状态；
+- Service：登录、refresh 轮换、logout、用户状态规则；
+- Repository：全部 GORM 用户表访问；
+- JWT Middleware：Bearer token 验证和 Context 身份；
+- Casbin Middleware：GORM policy persistence、用户角色同步和有效权限计算；
+- Redis Middleware：refresh token 建立、原子轮换和删除；
+- DTO：HTTP 合同，与 GORM model 分离。
 
-- 保留 OpenAI 原始 JSON 中的未知字段；
-- 选择、解密并尝试多个 Provider Key；
-- 只允许在首个下游可见事件之前切换 Key；
-- 把上游流解析成中立事件，再转成三种下游协议；
-- SSE/WebSocket 断开、取消和部分用量计费；
-- 流结束后才能发送完成事件。
+依赖接口遵循使用方定义原则：Repository 是具体的 GORM 实现，Auth/User Service 直接依赖 `*user.Repository`；需要隔离 HTTP 层时，由 Handler 定义最小 Service 接口，例如 `CurrentUserService`。Repository 文件不声明只为测试替身服务的接口。
 
-如果立刻独立 Provider 服务，需要先定义稳定的原始 payload、流事件、错误、取消和认证协议。当前这些仍是进程内 Java 类型和回调边界，因此保留在 `core-service`。
+分层不产生网络调用；Auth 与 User 都在同一 `cmd/api` 进程内。
 
-### 4.2 Billing 暂不独立
-
-成功计费依赖固定的本地事务顺序：
-
-```text
-claim usage_billing_dedup
--> SELECT wallet ... FOR UPDATE
--> validate and update wallet
--> INSERT request_log
--> INSERT usage_record
--> INSERT wallet_transaction
--> UPDATE idempotency_record
--> COMMIT
-```
-
-这些表目前都在同一个 MySQL 数据库。拆成独立 Billing 服务会把一个可验证的本地事务转换为分布式事务和跨服务幂等问题。
-
-### 4.3 User 暂不独立
-
-注册同时创建用户、绑定角色并创建钱包；API Key、JWT、钱包查询也共享用户身份。拆分前应先明确用户服务是否拥有钱包初始化、认证数据和 API Key 的职责。
-
-因此当前边界是“边缘网关 + 核心业务服务”，而不是伪装成微服务的多进程共享数据库。
-
-## 5. Spring Cloud 与 Nacos
-
-版本由根 Maven 工程统一管理：
-
-| 组件 | 版本 |
-| --- | --- |
-| Java | 21 |
-| Spring Boot | 3.5.16 |
-| Spring Cloud Release Train | 2025.0.3 |
-| Spring Cloud Alibaba | 2025.0.0.0 |
-| Nacos Server | 3.2.3 |
-
-两个服务都设置固定的 `spring.application.name`，并使用相同的 Nacos 地址。Compose 开启 Nacos 客户端、管理 API 和控制台认证：
-
-```text
-gateway-service
-core-service
-```
-
-配置中心：
-
-| Service | Data ID | Group |
-| --- | --- | --- |
-| `gateway-service` | `gateway-service.yml` | `AI_GATEWAY` |
-| `core-service` | `core-service.yml` | `AI_GATEWAY` |
-
-应用通过 `spring.config.import=optional:nacos:...` 加载配置。`optional:` 允许禁用 Nacos 的单元测试和纯本地逻辑测试启动；Compose 部署会显式启用注册和配置。
-
-Nacos 配置只保存非敏感参数。密码、JWT/Jasypt 密钥和 Provider Key 仍由环境变量或 CI Secret 提供。
-
-生产 Compose 覆盖文件使用必填变量校验，缺少数据库、RabbitMQ、JWT、Jasypt、Nacos 或 Grafana 密钥时拒绝启动。部署流程会在启动业务服务前强制重跑一次 Nacos 配置发布容器，避免复用旧的一次性容器。
-
-Kubernetes 最小迁移模式不启动 Nacos。`ai-gateway` Namespace 中的 ConfigMap 会关闭 Nacos 配置和发现，并通过环境变量把 Gateway 路由切换为 Kubernetes Service DNS：
-
-```text
-CORE_SERVICE_BASE_URL=http://core-service:8081
-CORE_SERVICE_WEBSOCKET_URL=ws://core-service:8081
-```
-
-Compose 则显式保留 `lb://core-service` 和 `lb:ws://core-service`。两种部署方式复用同一份 `application.yml`，只改变外部配置。
-
-## 6. 路由与协议
-
-`gateway-service` 显式声明路由：
-
-| Route | URI | Predicate |
-| --- | --- | --- |
-| `core-http` | `${CORE_SERVICE_BASE_URL:lb://core-service}` | `/api/**`、`/v1/**`、`/chat/**`、`/responses/**`、`/backend-api/codex/**` |
-| `core-websocket` | `${CORE_SERVICE_WEBSOCKET_URL:lb:ws://core-service}` | Responses 三个升级路径并且 `Upgrade: websocket` |
-
-WebSocket 路径：
-
-```text
-/v1/responses
-/responses
-/backend-api/codex/responses
-```
-
-业务 API 的状态码、错误 JSON、`Retry-After`、鉴权 Header、`Idempotency-Key` 和流式事件由 `core-service` 决定，网关只透明转发。模型 POST 路由不配置自动重试，避免重复上游调用和重复扣费。
-
-## 7. 请求 ID 与信任边界
+## 3. 登录调用链
 
 ```mermaid
 sequenceDiagram
     participant C as Client
-    participant G as gateway-service
-    participant S as core-service
-    participant L as Core log
+    participant H as AuthHandler
+    participant S as AuthService
+    participant U as UserRepository
+    participant P as PostgreSQL
+    participant E as CasbinEnforcer
+    participant J as JWTManager
+    participant R as Redis
 
-    C->>G: request + optional X-Request-Id
-    G->>G: validate or generate UUID
-    G->>G: remove spoofable internal headers
-    G->>S: forward X-Request-Id
-    S->>S: put requestId into MDC
-    S->>L: log with the same requestId
-    S-->>G: response + X-Request-Id
-    G-->>C: response + X-Request-Id
+    C->>H: POST /api/v1/auth/login
+    H->>S: Login(LoginRequest)
+    S->>U: GetUserAuthByUsername
+    U->>P: GORM SELECT users
+    S->>S: bcrypt verify + active check
+    S->>E: sync user role + load permissions
+    E->>P: casbin_rule
+    S->>J: GenerateTokenWithPermissions
+    S->>R: SET SHA256(refresh) -> userID with TTL
+    H-->>C: accessToken + HttpOnly refresh Cookie
 ```
 
-请求 ID 的约束：
+不存在的用户仍执行 dummy bcrypt。Redis 不存储或暴露原始 refresh token，只保存 `refresh_token:<sha256>` key。
 
-- 只接受 `[A-Za-z0-9._:-]+`；
-- 最长 128 字符；
-- 缺失或不合法时生成 UUID；
-- 每次请求结束后从 MDC 删除，防止线程复用污染下一次请求。
+浏览器端由 Vue Router 保护首页路由。登录页调用 `/api/v1/auth/login`，根据“记住登录状态”把 access token 保存到 `localStorage` 或 `sessionStorage`，refresh token 始终仅存在于后端设置的 HttpOnly Cookie 中。`src/axios/config.js` 定义默认拦截器，`service.js` 持有业务请求与刷新请求两个 Axios 实例，`index.js` 提供统一请求入口。请求拦截器统一注入 Bearer access token；响应拦截器遇到 `401` 时调用 `/api/v1/auth/refresh` 轮换 Cookie 并重试原请求一次。并发 `401` 共享同一个 refresh Promise，避免重复轮换导致旧 refresh token 重放失败；刷新失败则清理 access token 并返回登录页。前端不读取 refresh token。
 
-`X-Request-Id` 用于排查，不是认证凭证。客户端传入的 `X-Internal-Token` 和 `X-User-Id` 会在边缘网关删除。
-
-## 8. 非流式模型调用
+## 4. 注册调用链
 
 ```mermaid
 sequenceDiagram
     participant C as Client
-    participant G as Gateway
-    participant S as ModelCallService
-    participant K as ProviderKeySelector
-    participant P as ProviderAdapter
-    participant B as BillingService
-    participant DB as MySQL
-    participant R as RabbitMQ
+    participant H as AuthHandler
+    participant S as AuthService
+    participant U as UserRepository
+    participant P as PostgreSQL
+    participant E as CasbinEnforcer
 
-    C->>G: POST + API Key + optional Idempotency-Key
-    G->>S: load-balanced forwarding
-    S->>DB: claim idempotency record
-    S->>S: resolve model and check wallet
-    S->>K: ordered Provider credentials
-    loop before terminal result
-        S->>P: invoke with candidate credential
-        P-->>S: response or error
-        S->>DB: update Provider Key health
-    end
-    S->>B: persist result and usage
-    B->>DB: local billing transaction
-    DB-->>B: committed + newlyRecorded
-    alt first successful record
-        S->>R: best-effort request and usage events
-    else duplicate
-        S->>S: skip duplicate event publication
-    end
-    S-->>C: protocol-shaped response
+    C->>H: POST /api/v1/auth/register
+    H->>S: Register(RegisterRequest)
+    S->>S: validate + bcrypt hash
+    S->>U: AddUser(role=user)
+    U->>P: GORM INSERT users
+    S->>E: bind user:<id> -> role:user
+    E->>P: INSERT casbin_rule grouping
+    H-->>C: 201 register successful
 ```
 
-RabbitMQ 发布发生在数据库事务提交之后。发布异常会记录错误但不会把已扣费的模型调用改判成失败。这保证核心结果优先，但仍存在消息丢失窗口。
+客户端必须提交 `username`、`password`、`check_password`、非空 `code` 和 `iAgree=true`。用户名为 3–50 个字符，密码为 8–72 字节；客户端不能指定角色，所有注册用户固定为 `user`。当前验证码只复用原后端的“非空检查”阶段，没有验证码发送或真实性校验服务。
 
-## 9. SSE 与 WebSocket
+Vue 登录页提供“创建账号”入口并导航到 `/register`。注册页在客户端先检查用户名长度、密码长度与一致性、非空注册码及使用确认，再调用注册接口；`201` 成功后不建立登录会话，而是返回 `/login`、回填新用户名并显示成功提示。`400` 和 `409` 分别映射为表单校验与用户名重复反馈。
 
-HTTP SSE 和 Responses WebSocket 最终都复用 `ModelCallService`、Provider Key 调度、流事件适配和 `BillingService`。
-
-关键规则：
-
-- 上游事件先转成 `ProviderStreamEvent`，再转为 OpenAI、Anthropic 或 Responses 事件；
-- OpenAI 兼容请求设置 `stream_options.include_usage=true`；
-- 只在第一个客户端可见事件之前允许切换 Provider Key；
-- `[DONE]`、`message_stop`、`response.completed` 在计费事务成功后才发送；
-- Provider 未返回完整 usage 时使用估算值并标记 `ESTIMATED`；
-- 上游已经输出后失败或客户端断开时，按已经发生的部分 usage 计费；
-- WebSocket 升级与双向帧必须由 Nginx、Gateway 和 Core 三层共同保持；
-- SSE 三层都必须关闭会聚合事件的代理缓冲，并允许长读取超时。
-
-## 10. 数据归属和一致性
-
-当前全部业务数据仍归 `core-service` 所有：
-
-```text
-user_account 1--1 wallet
-user_account 1--N api_key
-provider 1--N provider_key
-provider 1--N model 1--N pricing_rule
-provider_key 1--N provider_key_quota_window
-request_log 1--0..1 usage_record
-wallet 1--N wallet_transaction
-api_key 1--N idempotency_record
-api_key 1--N usage_billing_dedup
-```
-
-数据库约束提供最终保护：
-
-- `usage_billing_dedup(request_id, api_key_id)` 唯一；
-- `request_log.request_id` 唯一；
-- `usage_record.request_id` 唯一；
-- `wallet_transaction(request_id, type)` 唯一；
-- 钱包行通过 `SELECT ... FOR UPDATE` 串行扣减。
-
-不能因为新增了服务发现，就让两个服务直接共享和修改同一组业务表。未来如果提取新服务，应先指定表的唯一所有者，并通过 API 或事件访问。
-
-## 11. RabbitMQ 边界
-
-当前 Topic Exchange、持久 Queue、版本化 JSON 事件、生产者和手动 ACK Consumer 已存在。非流式成功链路在首次落库后发布：
-
-```text
-request.completed
-usage.recorded
-```
-
-Consumer 当前只记录事件，尚未生成独立投影。当前发布是 best-effort：
-
-```text
-database commit
--> publish events
-```
-
-数据库提交后应用退出或 Broker 不可用可能丢事件。后续可靠化顺序应为：
-
-```text
-Transactional Outbox
--> publisher confirm / retry
--> consumer idempotency
--> dead-letter queue
-```
-
-## 12. 部署与网络
+## 5. Refresh 与 logout
 
 ```mermaid
-flowchart TB
-    Internet["Internet"]
-    Host["Linux 106.53.192.153"]
-    Nginx["Nginx\n0.0.0.0:8088 -> :80"]
-    Network["Docker internal network"]
-    Gateway["gateway-service :8080"]
-    Core["core-service :8081"]
-    Infra["Nacos / MySQL / Redis / RabbitMQ"]
+sequenceDiagram
+    participant C as Client
+    participant H as AuthHandler
+    participant S as AuthService
+    participant R as Redis
+    participant U as UserRepository
+    participant E as CasbinEnforcer
+    participant J as JWTManager
 
-    Internet --> Host --> Nginx --> Gateway --> Core --> Infra
+    C->>H: POST /api/v1/auth/refresh + Cookie
+    H->>S: Refresh(old token)
+    S->>R: Lua DEL old + SET new atomically
+    R-->>S: userID
+    S->>U: GetUserAuthByID
+    S->>S: active check
+    S->>E: sync user role + load permissions
+    S->>J: GenerateTokenWithPermissions
+    H-->>C: new accessToken + rotated Cookie
+
+    C->>H: POST /api/v1/auth/logout
+    H->>S: Logout(refresh token)
+    S->>R: DEL hashed key
+    H-->>C: expired Cookie
 ```
 
-公网入口：
+规则：
+
+- refresh token 是 32 字节安全随机值，以 Base64URL 传输；
+- Cookie 为 HttpOnly、SameSite=Lax，Path 为 `/api/v1/auth`；
+- `COOKIE_SECURE` 控制 Secure 属性，HTTPS 环境必须开启；
+- rotation 使用 Redis Lua 原子完成，旧 token 只能成功使用一次；
+- 无 Cookie 的 logout 视为已经注销，幂等返回成功；
+- 用户删除或禁用后 refresh 失败；
+- refresh token 状态不放入 PostgreSQL。
+
+## 6. Access JWT 与当前用户
+
+- 同一 API 使用本地 HMAC 密钥签发和验证 HS256 access token；
+- `JWT_SECRET` 必须由根 `.env` 提供，代码和 Compose 都不提供开发默认密钥；
+- 校验 issuer、audience、iat、exp、sub；
+- claims 包含用户名、Casbin 角色和有效 permissions；
+- 不提供 JWKS；
+- `/users/me` 和 `/auth/verify` 经 JwtFilter 后，通过 User Service/Repository 回查 PostgreSQL，再由 Casbin 返回有效角色和权限。
+
+当前 Casbin 模型是最小 RBAC：用户 subject 为 `user:<id>`，角色 subject 为 `role:<code>`。仅支持 `user`、`admin`、`test`，三者都只有 `dashboard:view` 权限；暂不提供角色或策略管理 API。
+
+## 7. 日志、数据和 readiness
+
+API 使用 `log/slog` JSON handler，同时写标准输出和 lumberjack 轮转文件。`LOG_FILE` 为空时使用 `./logs/backend/app.log`；不提交的根 `.env` 为 Compose 设置 `/var/log/ai-gateway/app.log`，Compose 也为缺省场景提供同一路径，该目录由镜像以 UID `65532` 创建，并挂载到 `api-logs` named volume。可提交的 `.env.example` 不保存本地日志路径。单文件上限 100 MB，最多保留 10 个备份和 30 天，旧文件启用压缩。启动时无法创建或打开日志文件会终止进程；运行期间文件 sink 写入失败会报告到标准错误，标准输出日志仍继续。API 将该 logger 设为全局默认值，HTTP access/recovery 也复用同一实例。
+
+PostgreSQL 当前包含最小 `users` 表：
 
 ```text
-http://106.53.192.153:8088
+id, username, password_hash, role_code, is_active, created_at, updated_at
 ```
 
-MySQL、Redis、RabbitMQ 和 Nacos 不能发布到 `0.0.0.0`。需要本机诊断的管理端口应绑定 `127.0.0.1`，通过 SSH 隧道访问。
+数据库结构只由 `backend/migrations` 管理：`000001_users` 创建用户表，`000002_casbin_rbac` 创建 `casbin_rule` 并写入三角色首页策略；migrate 工具在 `schema_migrations` 记录当前版本和 dirty 状态。生产 API 与 Casbin GORM Adapter 都关闭自动迁移，初始化管理员仍使用 `FirstOrCreate`。测试可在隔离的内存 SQLite 上使用 `AutoMigrate`，不影响生产 schema 流程。API readiness 同时检查 PostgreSQL `PingContext` 和 Redis `PING`；任一依赖不可用即返回 `503`。`cmd/healthcheck` 是 distroless 容器内的探测客户端，它请求 API `main` 暴露的 `/health/ready` 端点；两者分别承担探测方和被探测方职责。Gateway 容器使用同一客户端，经反向代理检查 API readiness。
 
-主要容器设置了总计约 2.9 GiB 的内存上限，为 3.6 GiB 主机上的 Linux 和 Docker 保留空间。Prometheus 与 Grafana 使用固定版本镜像，避免无界资源竞争或浮动标签升级造成不可重复部署。
-
-Prometheus 分别抓取：
+## 8. 仓库和部署边界
 
 ```text
-gateway-service:8080/actuator/prometheus
-core-service:8081/actuator/prometheus
+repository root
+├─ .env / .env.example
+├─ backend/         # Go module + Dockerfile + docker-compose.yml + migrations
+├─ frontend/        # Vue 3 + Vite source + Node/Nginx production image
+└─ docs/deployment.md
 ```
 
-## 13. CI/CD 与回滚
+Compose 文件位于 `backend/`；API/Gateway build context 是当前后端目录，Web build context 是 `../frontend`，migration job 只读挂载 `./migrations`，API 日志目录挂载 `api-logs` named volume。根 `.env` 由命令行 `--env-file` 显式传入；后端目录不放 `.env`。默认本地容器入口为 `127.0.0.1:${WEB_PORT:-8088}`，Nginx 静态服务与代理保持浏览器请求同源；Gateway 的 `127.0.0.1:${APP_PORT:-8080}` 仍保留给 API 调试。`.scripts/update-database.sh` 使用该 Compose 文件启动 PostgreSQL 并运行既有 migrate job；`.scripts/start.sh` 使用同一入口启动整个容器 Stack，同时以前台 Vite 提供开发热更新，`Ctrl+C` 只终止 Vite，不停止容器。
 
-GitHub Actions 流程：
+公开仓库只保存软件本身和通用运行能力：`ci.yml` 验证 Go/Vue 与全部镜像 target，`release.yml` 在 `main`、`v*` tag 或手动运行时，把 API、Gateway、Migrations、Web 四个同版本镜像发布到 GHCR，并始终附加完整源码 SHA 标签。生产 Compose、服务器地址和 CD 位于私有 `DWHuang99/erent-deploy`；其 `workflow_dispatch` 接受不可变镜像标签，SSH 到服务器后拉取私有部署仓库和四个镜像，等待 migration 与整套服务 healthy。公开仓库没有生产 Secrets、生产 Compose 或自动触发生产部署；详细边界见 `docs/deployment.md`。
 
-```text
-push / pull request
--> mvn clean verify
--> build gateway-service image
--> build core-service image
--> main push: push both SHA tags
--> erent environment approval
--> SSH deploy with Compose
--> nginx -t and reload
--> local + public health check
-```
+## 9. 当前能力边界
 
-两个镜像使用同一个 commit SHA。手动 `workflow_dispatch` 接受以前成功发布的 SHA，以同一标签重新部署两个服务，作为最小回滚机制。
-
-## 14. 当前能力边界
-
-- `RefreshTokenService` 使用进程内存；`core-service` 暂时单副本，重启会让旧 Refresh Token 失效。
-- Nacos 是 standalone 单节点，Nacos 故障会影响新实例发现和动态配置，不具备生产高可用。
-- RabbitMQ 发布是 best-effort，尚无 Outbox、自动补发和完整死信处理。
-- `core-service` 仍是一个按包分层的模块化单体，Provider、Billing、User 尚未独立。
-- 当前没有服务间独立认证协议；只有网关到核心服务一跳，核心服务也不应直接暴露公网。
-- HTTPS 需要域名和真实证书后单独启用。
-- 当前服务器资源有限，不以堆叠更多中间件或大量 JVM 为目标。
-
-下一次拆分的前置条件不是“类很多”，而是某个领域已经具备稳定职责、独立数据所有权、清晰 API/事件合同和可独立验证的发布价值。
+- 已实现：Vue 3 登录页与受保护首页、登录后跳转、access token 会话恢复、自动 refresh 重试、退出登录、响应式导航和明暗主题；Node/Nginx 多阶段生产镜像提供 SPA 回退、静态资源缓存及同源 API/readiness 代理；
+- 已实现：后端注册、登录、access JWT、Redis refresh rotation、logout、当前用户、初始化管理员、Casbin 三角色首页权限、readiness；
+- 未实现：真实验证码服务、改密、多设备会话管理、角色/策略管理、细粒度业务权限、审计；
+- 未实现：Provider、模型目录、Chat Completions、SSE、WebSocket；
+- 未实现：API Key、限流、用量、钱包和计费。

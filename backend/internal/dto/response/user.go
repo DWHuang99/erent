@@ -1,0 +1,15 @@
+package response
+
+import "time"
+
+type UserInfo struct {
+	ID          uint64    `json:"id"`
+	Username    string    `json:"username"`
+	RoleCode    string    `json:"roleCode"`
+	RoleName    string    `json:"roleName"`
+	Roles       []string  `json:"roles"`
+	Permissions []string  `json:"permissions"`
+	IsActive    bool      `json:"isActive"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}

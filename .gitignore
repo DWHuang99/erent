@@ -1,4 +1,13 @@
-# Maven / Java build output
+# Go build and test output
+bin/
+dist/
+node_modules/
+.cache/
+coverage.out
+*.test
+*.prof
+
+# Legacy build output kept ignored while local artifacts are cleaned manually
 target/
 out/
 *.class
@@ -27,17 +36,11 @@ logs/
 *.pid
 *.tmp
 
-# Local environment and Spring configuration
+# Local environment
 .env
 .env.*
 !.env.example
 !.env.sample
-!deploy/k8s/.env.secret.example
-deploy/k8s/.env.secret
-deploy/k8s/*-secret.yaml
-application-local.yml
-application-local.yaml
-application-local.properties
 
 # Local secrets and TLS certificates
 secrets/

@@ -1,0 +1,106 @@
+:root {
+  color-scheme: light;
+  --bg-secondary: #faf9f5;
+  --bg-primary: #f0eee8;
+  --bg-tertiary: #e9e6df;
+  --floating-surface: #fffdf9;
+  --text-primary: #2d2a26;
+  --text-secondary: #6d6760;
+  --text-tertiary: #a29c95;
+  --border-color: #e3e1db;
+  --border-primary: #d5d2cb;
+  --border-hover: #c6c1ba;
+  --primary-color: #8b8680;
+  --primary-active: #726d67;
+  --primary-contrast: #fff;
+  --primary-10: rgb(139 134 128 / 10%);
+  --success-color: #10b981;
+  --warning-color: #c65746;
+  --warning-bg: rgb(198 87 70 / 10%);
+  --warning-border: rgb(198 87 70 / 35%);
+  --success-badge-bg: #d1fae5;
+  --success-badge-text: #065f46;
+  --success-badge-border: #6ee7b7;
+  --shadow-lg: 0 18px 45px rgb(45 42 38 / 9%);
+  --floating-shadow: 0 12px 26px rgb(0 0 0 / 14%);
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  --dur-press: 160ms;
+  --dur-hover: 200ms;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg-secondary: #151412;
+  --bg-primary: #1d1c19;
+  --bg-tertiary: #282622;
+  --floating-surface: #24221f;
+  --text-primary: #f2efe8;
+  --text-secondary: #b0aaa2;
+  --text-tertiary: #77716b;
+  --border-color: #34312d;
+  --border-primary: #45413b;
+  --border-hover: #5c564e;
+  --primary-color: #aaa49c;
+  --primary-active: #c2bbb1;
+  --primary-contrast: #151412;
+  --primary-10: rgb(194 187 177 / 10%);
+  --success-badge-bg: rgb(16 185 129 / 15%);
+  --success-badge-text: #6ee7b7;
+  --success-badge-border: rgb(110 231 183 / 35%);
+  --shadow-lg: 0 18px 45px rgb(0 0 0 / 20%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  min-height: 100%;
+  background: var(--bg-secondary);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+button,
+input {
+  font-family: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: var(--text-primary);
+  color: var(--bg-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
