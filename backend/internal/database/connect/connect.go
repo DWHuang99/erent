@@ -14,7 +14,8 @@ import (
 
 func Connect(ctx context.Context, databaseURL string) (*gorm.DB, *sql.DB, error) {
 	database, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Warn),
+		Logger:         logger.Default.LogMode(logger.Warn),
+		TranslateError: true,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("open database: %w", err)

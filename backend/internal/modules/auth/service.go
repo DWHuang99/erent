@@ -3,39 +3,50 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/DWHuang99/erent/internal/dto/request"
+	casbinrbac "github.com/DWHuang99/erent/internal/middleware/casbin"
 	jwtservice "github.com/DWHuang99/erent/internal/middleware/jwt"
 	rdb "github.com/DWHuang99/erent/internal/middleware/redis"
 	"github.com/DWHuang99/erent/internal/modules/user"
 	"github.com/DWHuang99/erent/internal/security"
+	"github.com/casbin/casbin/v3"
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 )
 
 var (
+	ErrInvalidRequest      = errors.New("invalid request")
 	ErrInvalidRefreshToken = errors.New("invalid or expired refresh token")
+	ErrUserExists          = errors.New("username already exists")
 	ErrUserDisabled        = errors.New("user is disabled")
 )
 
-type UserAuthRepository interface {
-	GetUserAuthByUsername(context.Context, string) (*user.UserAuth, error)
-	GetUserAuthByID(context.Context, uint64) (*user.UserAuth, error)
-}
+const defaultRegistrationRoleCode = casbinrbac.RoleUser
 
 type AuthService struct {
-	userRepository UserAuthRepository
+	userRepository *user.Repository
 	jwtManager     *jwtservice.JWTManager
 	redisClient    *redis.Client
+	enforcer       *casbin.SyncedEnforcer
 	dummyHash      string
 }
 
-func NewService(userRepository UserAuthRepository, jwtManager *jwtservice.JWTManager, redisClient *redis.Client) *AuthService {
+func NewService(
+	userRepository *user.Repository,
+	jwtManager *jwtservice.JWTManager,
+	redisClient *redis.Client,
+	enforcer *casbin.SyncedEnforcer,
+) *AuthService {
 	dummyHash, _ := security.HashPassword("not-a-real-password")
 	return &AuthService{
 		userRepository: userRepository,
 		jwtManager:     jwtManager,
 		redisClient:    redisClient,
+		enforcer:       enforcer,
 		dummyHash:      dummyHash,
 	}
 }
@@ -59,6 +70,34 @@ func (s *AuthService) Login(ctx context.Context, loginRequest request.LoginReque
 	return accessToken, refreshToken, true, err
 }
 
+func (s *AuthService) Register(ctx context.Context, registerRequest request.RegisterRequest) (*user.User, error) {
+	username := strings.TrimSpace(registerRequest.Username)
+	passwordLength := len([]byte(registerRequest.Password))
+	if utf8.RuneCountInString(username) < 3 || utf8.RuneCountInString(username) > 50 ||
+		passwordLength < 8 || passwordLength > 72 ||
+		registerRequest.Password != registerRequest.CheckPassword ||
+		strings.TrimSpace(registerRequest.Code) == "" ||
+		!registerRequest.IAgree {
+		return nil, ErrInvalidRequest
+	}
+
+	passwordHash, err := security.HashPassword(registerRequest.Password)
+	if err != nil {
+		return nil, err
+	}
+	registeredUser, err := s.userRepository.AddUser(ctx, username, passwordHash, defaultRegistrationRoleCode)
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return nil, ErrUserExists
+	}
+	if err != nil {
+		return nil, err
+	}
+	if _, _, err := casbinrbac.AuthorizationForUser(s.enforcer, registeredUser.ID, registeredUser.RoleCode); err != nil {
+		return nil, err
+	}
+	return registeredUser, nil
+}
+
 func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (string, string, error) {
 	newRefreshToken, userID, err := rdb.RotateRefreshToken(s.redisClient, ctx, refreshToken, s.jwtManager.RefreshTTL)
 	if errors.Is(err, rdb.ErrRefreshTokenNotFound) {
@@ -77,7 +116,7 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (string,
 	if !userAuth.IsActive {
 		return "", "", ErrUserDisabled
 	}
-	accessToken, err := s.jwtManager.GenerateToken(userAuth.ID, userAuth.Username, userAuth.RoleCode)
+	accessToken, err := s.accessTokenForUser(userAuth)
 	if err != nil {
 		return "", "", err
 	}
@@ -93,7 +132,7 @@ func (s *AuthService) RefreshTTL() time.Duration {
 }
 
 func (s *AuthService) issueTokensForUser(ctx context.Context, userAuth *user.UserAuth) (string, string, error) {
-	accessToken, err := s.jwtManager.GenerateToken(userAuth.ID, userAuth.Username, userAuth.RoleCode)
+	accessToken, err := s.accessTokenForUser(userAuth)
 	if err != nil {
 		return "", "", err
 	}
@@ -102,4 +141,12 @@ func (s *AuthService) issueTokensForUser(ctx context.Context, userAuth *user.Use
 		return "", "", err
 	}
 	return accessToken, refreshToken, nil
+}
+
+func (s *AuthService) accessTokenForUser(userAuth *user.UserAuth) (string, error) {
+	roles, permissions, err := casbinrbac.AuthorizationForUser(s.enforcer, userAuth.ID, userAuth.RoleCode)
+	if err != nil {
+		return "", err
+	}
+	return s.jwtManager.GenerateTokenWithPermissions(userAuth.ID, userAuth.Username, roles, permissions)
 }

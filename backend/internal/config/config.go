@@ -14,7 +14,6 @@ const (
 	defaultEnvironment     = "development"
 	defaultHTTPAddress     = ":8080"
 	defaultDatabaseURL     = "postgres://ai_gateway:ai_gateway_dev@localhost:5432/ai_gateway?sslmode=disable"
-	defaultJWTSecret       = "development-only-change-this-secret"
 	defaultJWTIssuer       = "ai-gateway"
 	defaultJWTAudience     = "ai-gateway-api"
 	defaultJWTAccessTTL    = 15 * time.Minute
@@ -55,7 +54,7 @@ func load(lookup lookupEnvironment) (Config, error) {
 		Environment:       strings.TrimSpace(valueOrDefault(lookup, "APP_ENV", defaultEnvironment)),
 		HTTPAddress:       strings.TrimSpace(valueOrDefault(lookup, "HTTP_ADDR", defaultHTTPAddress)),
 		DatabaseURL:       strings.TrimSpace(valueOrDefault(lookup, "DATABASE_URL", defaultDatabaseURL)),
-		JWTSecret:         valueOrDefault(lookup, "JWT_SECRET", defaultJWTSecret),
+		JWTSecret:         valueOrDefault(lookup, "JWT_SECRET", ""),
 		JWTIssuer:         strings.TrimSpace(valueOrDefault(lookup, "JWT_ISSUER", defaultJWTIssuer)),
 		JWTAudience:       strings.TrimSpace(valueOrDefault(lookup, "JWT_AUDIENCE", defaultJWTAudience)),
 		RedisAddress:      strings.TrimSpace(valueOrDefault(lookup, "REDIS_ADDR", defaultRedisAddress)),

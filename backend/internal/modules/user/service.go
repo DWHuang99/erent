@@ -3,6 +3,9 @@ package user
 import (
 	"context"
 	"errors"
+
+	casbinrbac "github.com/DWHuang99/erent/internal/middleware/casbin"
+	"github.com/casbin/casbin/v3"
 )
 
 var (
@@ -10,16 +13,13 @@ var (
 	ErrUserDisabled  = errors.New("user is disabled")
 )
 
-type UserReader interface {
-	GetUserByID(context.Context, uint64) (*CurrentUser, error)
-}
-
 type Service struct {
-	repository UserReader
+	repository *Repository
+	enforcer   *casbin.SyncedEnforcer
 }
 
-func NewService(repository UserReader) *Service {
-	return &Service{repository: repository}
+func NewService(repository *Repository, enforcer *casbin.SyncedEnforcer) *Service {
+	return &Service{repository: repository, enforcer: enforcer}
 }
 
 func (s *Service) GetUserByID(ctx context.Context, userID uint64) (*CurrentUser, error) {
@@ -33,5 +33,11 @@ func (s *Service) GetUserByID(ctx context.Context, userID uint64) (*CurrentUser,
 	if !currentUser.IsActive {
 		return nil, ErrUserDisabled
 	}
+	roles, permissions, err := casbinrbac.AuthorizationForUser(s.enforcer, currentUser.ID, currentUser.RoleCode)
+	if err != nil {
+		return nil, err
+	}
+	currentUser.Roles = roles
+	currentUser.Permissions = permissions
 	return currentUser, nil
 }

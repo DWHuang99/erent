@@ -8,7 +8,7 @@ import (
 
 func TestGenerateAndParseToken(t *testing.T) {
 	manager := NewJWTManager("test-secret-with-at-least-32-characters", "issuer", "audience", time.Minute, time.Hour)
-	token, err := manager.GenerateToken(42, "alice", "admin")
+	token, err := manager.GenerateTokenWithPermissions(42, "alice", []string{"admin"}, []string{"dashboard:view"})
 	if err != nil {
 		t.Fatalf("generate token: %v", err)
 	}
@@ -16,7 +16,7 @@ func TestGenerateAndParseToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse token: %v", err)
 	}
-	if claims.Subject != "42" || claims.Username != "alice" || len(claims.Role) != 1 || claims.Role[0] != "admin" {
+	if claims.Subject != "42" || claims.Username != "alice" || len(claims.Role) != 1 || claims.Role[0] != "admin" || len(claims.Permissions) != 1 || claims.Permissions[0] != "dashboard:view" {
 		t.Fatalf("unexpected claims: %+v", claims)
 	}
 }

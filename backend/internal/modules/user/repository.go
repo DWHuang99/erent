@@ -19,11 +19,17 @@ func NewRepository(database *gorm.DB) *Repository {
 	return &Repository{database: database}
 }
 
-func (r *Repository) Migrate(ctx context.Context) error {
-	if err := r.database.WithContext(ctx).AutoMigrate(&User{}); err != nil {
-		return fmt.Errorf("migrate users: %w", err)
+func (r *Repository) AddUser(ctx context.Context, username, passwordHash, roleCode string) (*User, error) {
+	model := User{
+		Username:     strings.TrimSpace(username),
+		PasswordHash: passwordHash,
+		RoleCode:     roleCode,
+		IsActive:     true,
 	}
-	return nil
+	if err := r.database.WithContext(ctx).Create(&model).Error; err != nil {
+		return nil, err
+	}
+	return &model, nil
 }
 
 func (r *Repository) GetUserAuthByUsername(ctx context.Context, username string) (*UserAuth, error) {

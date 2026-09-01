@@ -11,38 +11,28 @@ import (
 	"testing"
 	"time"
 
+	casbinrbac "github.com/DWHuang99/erent/internal/middleware/casbin"
 	"github.com/DWHuang99/erent/internal/middleware/httpserver"
 	jwtservice "github.com/DWHuang99/erent/internal/middleware/jwt"
 	"github.com/DWHuang99/erent/internal/modules/user"
 	"github.com/DWHuang99/erent/internal/security"
+	"github.com/DWHuang99/erent/internal/testdatabase"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/casbin/casbin/v3"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 )
 
-type fakeUserRepository struct {
-	passwordHash string
-}
-
-func (f fakeUserRepository) GetUserAuthByUsername(context.Context, string) (*user.UserAuth, error) {
-	return &user.UserAuth{
-		ID: 1, Username: "admin", PasswordHash: f.passwordHash, RoleCode: "admin", IsActive: true,
-	}, nil
-}
-
-func (f fakeUserRepository) GetUserAuthByID(context.Context, uint64) (*user.UserAuth, error) {
-	return &user.UserAuth{
-		ID: 1, Username: "admin", PasswordHash: f.passwordHash, RoleCode: "admin", IsActive: true,
-	}, nil
-}
-
-func (f fakeUserRepository) GetUserByID(context.Context, uint64) (*user.CurrentUser, error) {
-	return &user.CurrentUser{
-		ID: 1, Username: "admin", RoleCode: "admin", RoleName: "admin", Roles: []string{"admin"}, Permissions: []string{}, IsActive: true,
-	}, nil
-}
-
-func newTestRouter(repository *fakeUserRepository, manager *jwtservice.JWTManager, redisClient *redis.Client) *gin.Engine {
+func newTestRouter(t *testing.T, repository *user.Repository, manager *jwtservice.JWTManager, redisClient *redis.Client) *gin.Engine {
+	t.Helper()
+	var enforcer *casbin.SyncedEnforcer
+	if manager != nil {
+		var err error
+		enforcer, err = casbinrbac.NewMemoryEnforcer()
+		if err != nil {
+			t.Fatalf("create test enforcer: %v", err)
+		}
+	}
 	gin.SetMode(gin.ReleaseMode)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	router := gin.New()
@@ -56,24 +46,33 @@ func newTestRouter(repository *fakeUserRepository, manager *jwtservice.JWTManage
 	router.GET("/health/ready", health)
 	api := router.Group("/api/v1")
 	if repository != nil && manager != nil && redisClient != nil {
-		AuthRouter(api, *repository, manager, redisClient, false)
+		AuthRouter(api, repository, manager, redisClient, enforcer, false)
 	}
-	if repository != nil && manager != nil {
-		UserRouter(api, *repository, manager)
-	} else if manager != nil {
-		UserRouter(api, fakeUserRepository{}, manager)
+	if manager != nil {
+		UserRouter(api, repository, manager, enforcer)
 	}
 	return router
 }
 
 func TestLoginAndCurrentUserFlow(t *testing.T) {
-	hash, _ := security.HashPassword("admin12345")
-	repository := fakeUserRepository{passwordHash: hash}
+	database := testdatabase.Open(t)
+	repository := user.NewRepository(database)
+	if err := database.AutoMigrate(&user.User{}); err != nil {
+		t.Fatalf("migrate users: %v", err)
+	}
+	hash, err := security.HashPassword("admin12345")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	if err := repository.CreateBootstrapUser(context.Background(), "admin", hash, "admin"); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
 	manager := jwtservice.NewJWTManager("test-secret-with-at-least-32-characters", "issuer", "audience", time.Minute, time.Hour)
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	defer redisClient.Close()
-	router := newTestRouter(&repository, manager, redisClient)
+	router := newTestRouter(t, repository, manager, redisClient)
 
 	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"admin12345"}`))
 	loginRequest.Header.Set("Content-Type", "application/json")
@@ -100,7 +99,7 @@ func TestLoginAndCurrentUserFlow(t *testing.T) {
 		request.Header.Set("Authorization", "Bearer "+loginPayload.Data.AccessToken)
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
-		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"username":"admin"`) {
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"username":"admin"`) || !strings.Contains(response.Body.String(), `"permissions":["dashboard:view"]`) {
 			t.Fatalf("%s status = %d, body = %s", path, response.Code, response.Body.String())
 		}
 	}
@@ -126,8 +125,51 @@ func TestLoginAndCurrentUserFlow(t *testing.T) {
 	}
 }
 
+func TestRegisterAndLoginFlow(t *testing.T) {
+	database := testdatabase.Open(t)
+	if err := database.AutoMigrate(&user.User{}); err != nil {
+		t.Fatalf("migrate users: %v", err)
+	}
+	repository := user.NewRepository(database)
+	manager := jwtservice.NewJWTManager("test-secret-with-at-least-32-characters", "issuer", "audience", time.Minute, time.Hour)
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	defer redisClient.Close()
+	router := newTestRouter(t, repository, manager, redisClient)
+
+	registerBody := `{"username":"registered-user","password":"password123","check_password":"password123","code":"123456","iAgree":true}`
+	registerRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(registerBody))
+	registerRequest.Header.Set("Content-Type", "application/json")
+	registerResponse := httptest.NewRecorder()
+	router.ServeHTTP(registerResponse, registerRequest)
+	if registerResponse.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, body = %s", registerResponse.Code, registerResponse.Body.String())
+	}
+
+	duplicateRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(registerBody))
+	duplicateRequest.Header.Set("Content-Type", "application/json")
+	duplicateResponse := httptest.NewRecorder()
+	router.ServeHTTP(duplicateResponse, duplicateRequest)
+	if duplicateResponse.Code != http.StatusConflict {
+		t.Fatalf("duplicate status = %d, body = %s", duplicateResponse.Code, duplicateResponse.Body.String())
+	}
+
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"registered-user","password":"password123"}`))
+	loginRequest.Header.Set("Content-Type", "application/json")
+	loginResponse := httptest.NewRecorder()
+	router.ServeHTTP(loginResponse, loginRequest)
+	if loginResponse.Code != http.StatusOK || !strings.Contains(loginResponse.Body.String(), `"accessToken"`) {
+		t.Fatalf("login status = %d, body = %s", loginResponse.Code, loginResponse.Body.String())
+	}
+
+	registeredUser, err := repository.GetUserAuthByUsername(context.Background(), "registered-user")
+	if err != nil || registeredUser.RoleCode != casbinrbac.RoleUser {
+		t.Fatalf("registered user = %+v, err = %v", registeredUser, err)
+	}
+}
+
 func TestHealthAndRequestID(t *testing.T) {
-	router := newTestRouter(nil, nil, nil)
+	router := newTestRouter(t, nil, nil, nil)
 	for _, path := range []string{"/", "/api/health", "/health/live", "/health/ready"} {
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
@@ -139,7 +181,7 @@ func TestHealthAndRequestID(t *testing.T) {
 
 func TestProtectedRouteRequiresBearerToken(t *testing.T) {
 	manager := jwtservice.NewJWTManager("test-secret-with-at-least-32-characters", "issuer", "audience", time.Minute, time.Hour)
-	router := newTestRouter(nil, manager, nil)
+	router := newTestRouter(t, nil, manager, nil)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/users/me", nil))
 	if response.Code != http.StatusUnauthorized {

@@ -22,10 +22,15 @@ func NewJWTManager(secret, issuer, audience string, ttl, refreshTTL time.Duratio
 }
 
 func (m *JWTManager) GenerateToken(userID uint64, username, role string) (string, error) {
+	return m.GenerateTokenWithPermissions(userID, username, []string{role}, nil)
+}
+
+func (m *JWTManager) GenerateTokenWithPermissions(userID uint64, username string, roles, permissions []string) (string, error) {
 	now := time.Now()
 	claims := Claims{
-		Username: username,
-		Role:     []string{role},
+		Username:    username,
+		Role:        roles,
+		Permissions: permissions,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    m.issuer,
 			Subject:   strconv.FormatUint(userID, 10),

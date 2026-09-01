@@ -9,6 +9,7 @@ import (
 	"github.com/DWHuang99/erent/internal/config"
 	dbconnect "github.com/DWHuang99/erent/internal/database/connect"
 	"github.com/DWHuang99/erent/internal/dto/response"
+	casbinrbac "github.com/DWHuang99/erent/internal/middleware/casbin"
 	"github.com/DWHuang99/erent/internal/middleware/httpserver"
 	jwtservice "github.com/DWHuang99/erent/internal/middleware/jwt"
 	rdb "github.com/DWHuang99/erent/internal/middleware/redis"
@@ -54,11 +55,11 @@ func main() {
 	defer redisClient.Close()
 
 	userRepository := user.NewRepository(database)
-	if err := userRepository.Migrate(context.Background()); err != nil {
-		logger.Error("migrate database", "error", err)
-		os.Exit(1)
-	}
 	if configuration.BootstrapUsername != "" {
+		if !casbinrbac.IsSupportedRole(configuration.BootstrapRole) {
+			logger.Error("invalid bootstrap role", "role", configuration.BootstrapRole)
+			os.Exit(1)
+		}
 		passwordHash, err := security.HashPassword(configuration.BootstrapPassword)
 		if err != nil {
 			logger.Error("hash bootstrap password", "error", err)
@@ -73,6 +74,11 @@ func main() {
 			logger.Error("create bootstrap user", "error", err)
 			os.Exit(1)
 		}
+	}
+	casbinEnforcer, err := casbinrbac.NewEnforcer(database)
+	if err != nil {
+		logger.Error("initialize Casbin authorization", "error", err)
+		os.Exit(1)
 	}
 
 	jwtManager := jwtservice.NewJWTManager(
@@ -118,8 +124,8 @@ func main() {
 	})
 
 	api := router.Group("/api/v1")
-	apirouter.AuthRouter(api, userRepository, jwtManager, redisClient, configuration.CookieSecure)
-	apirouter.UserRouter(api, userRepository, jwtManager)
+	apirouter.AuthRouter(api, userRepository, jwtManager, redisClient, casbinEnforcer, configuration.CookieSecure)
+	apirouter.UserRouter(api, userRepository, jwtManager, casbinEnforcer)
 
 	logger.Info("http server starting", "address", configuration.HTTPAddress, "environment", configuration.Environment, "version", version)
 	if err := router.Run(configuration.HTTPAddress); err != nil {

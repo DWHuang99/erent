@@ -63,6 +63,26 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 }
 
+func (h *AuthHandler) Register(c *gin.Context) {
+	var registerRequest request.RegisterRequest
+	if err := c.ShouldBindJSON(&registerRequest); err != nil {
+		response.Error(c, http.StatusBadRequest, 10001, "invalid request")
+		return
+	}
+
+	_, err := h.service.Register(c.Request.Context(), registerRequest)
+	switch {
+	case err == nil:
+		response.SuccessWithStatus(c, http.StatusCreated, nil, "register successful")
+	case errors.Is(err, ErrInvalidRequest):
+		response.Error(c, http.StatusBadRequest, 10001, err.Error())
+	case errors.Is(err, ErrUserExists):
+		response.Error(c, http.StatusConflict, 10002, err.Error())
+	default:
+		response.Error(c, http.StatusInternalServerError, 10500, "internal server error")
+	}
+}
+
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	refreshToken, err := c.Cookie("refresh_token")
 	if err != nil || refreshToken == "" {
