@@ -2,6 +2,27 @@
 
 本文描述 `ai-gateway` 当前的服务边界、依赖方向、调用链、数据一致性和部署形态。具体文件与维护入口见 [CODEBASE.md](CODEBASE.md)。
 
+## 0. Go 重写（当前进行中）
+
+`backend/` 是按 `vue-element-plus-admin/backend` 风格重写的 Gin 单体。当前已落地认证与当前用户；Java `gateway-service` / `core-service` 仍保留在仓库中，尚未替换完整业务。
+
+```text
+Client
+  -> cmd/api（Gin router.Run）
+  -> PostgreSQL / Redis
+```
+
+可选 `cmd/gateway` 只做反向代理，同样用 Gin `Run`，不包一层 `http.Server`。
+
+启动与路由约定：
+
+- `cmd/api/main.go` 只加载配置、连接依赖、创建 `gin.Engine`、注册 `/ping` 与健康检查，然后调用 `apirouter.AuthRouter` / `UserRouter`，最后 `router.Run(HTTP_ADDR)`。
+- 不使用 `&http.Server{Handler: router}` 管理 API 生命周期；超时字段已从 API 配置中移除。
+- Handler 不在 `main` 创建。`internal/router` 内组装 `NewService`、`New*Handler` 并调用模块 `Register*Routes`，风格与脚手架 `internal/router/routerall.go` 一致。
+- 模块路由仍放在 `internal/modules/*/routes.go`。
+
+当前 Go 能力边界：登录、刷新、登出、`GET /api/v1/users/me`、`GET /api/v1/auth/verify`。模型调用、计费、API Key、SSE/WebSocket 仍在 Java `core-service`。
+
 ## 1. 架构目标
 
 当前版本不是把单体平均切成多个进程，而是先提取一个独立的边缘网关：

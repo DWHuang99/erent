@@ -2,10 +2,63 @@
 
 本文是当前代码结构和维护入口索引。服务边界、调用链和一致性约束见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
+## 0. Go 重写 `backend/`
+
+模块路径：`github.com/DWHuang99/erent`。常用命令：
+
+```bash
+cd backend
+go test ./...
+go run ./cmd/api
+```
+
+```text
+backend/
+├─ cmd/api/main.go
+├─ cmd/gateway/main.go
+├─ cmd/healthcheck/main.go
+├─ internal/config/
+├─ internal/database/connect/
+├─ internal/dto/
+├─ internal/middleware/
+├─ internal/modules/auth/
+├─ internal/modules/user/
+├─ internal/router/
+└─ internal/security/
+```
+
+| 入口 | 职责 |
+| --- | --- |
+| `cmd/api/main.go` | 加载配置、连接 PostgreSQL/Redis、bootstrap 用户；创建 `gin.Engine` 与 `/ping`、健康检查；调用 `AuthRouter`/`UserRouter`；`router.Run` |
+| `cmd/gateway/main.go` | 可选 Gin 反代，`newGatewayRouter` 后 `router.Run` |
+| `cmd/healthcheck/main.go` | 容器探活，请求 `/health/ready` |
+| `internal/router.AuthRouter` | 创建 `auth.NewService`/`NewAuthHandler` 并 `RegisterAuthRoutes` |
+| `internal/router.UserRouter` | 创建 `user.NewService`/`NewUserHandler` 并 `RegisterUserRoutes` |
+| `auth.RegisterAuthRoutes` | `POST /auth/login`、`/refresh`、`/logout` |
+| `user.RegisterUserRoutes` | JWT 保护的 `GET /users/me`、`GET /auth/verify` |
+| `httpserver.RequestID` | 校验或生成 `X-Request-Id` |
+| `jwtservice.JWTManager` / `JwtFilter` | 签发与校验 access/refresh token |
+| `middleware/redis` | Redis 连接与 refresh token 存储 |
+| `user.Repository` | GORM 用户读写与 bootstrap |
+| `security.HashPassword` | bcrypt |
+
+Go 测试：
+
+| 测试 | 覆盖 |
+| --- | --- |
+| `internal/router/routerall_test.go` | 登录、刷新轮换、登出、当前用户、健康检查、受保护路由 |
+| `cmd/gateway/main_test.go` | 本地 `/health/live`、`/ping` 与其余路径反代 |
+| `internal/config/config_test.go` | 环境变量默认值与非法值 |
+| `internal/modules/auth/service_test.go` | 登录与 refresh |
+| `internal/modules/user/service_test.go` | 当前用户 |
+| `internal/middleware/jwt/*_test.go` | JWT 签发与 Filter |
+| `internal/middleware/redis/refresh_token_test.go` | refresh token 存储 |
+
 ## 1. Maven 多模块
 
 ```text
 ai-gateway/
+├─ backend/                        Go/Gin 重写（进行中）
 ├─ pom.xml
 ├─ gateway-service/
 │  ├─ pom.xml
@@ -418,6 +471,10 @@ core-service/src/main/resources/mapper/
 
 | 需求 | 首先查看 |
 | --- | --- |
+| 修改 Go API 启动或 `/ping` | `backend/cmd/api/main.go` |
+| 修改 Go 路由组装与 Handler 创建 | `backend/internal/router/routerall.go`、`internal/modules/*/routes.go` |
+| 修改 Go 认证 | `backend/internal/modules/auth/` |
+| 修改 Go 当前用户 | `backend/internal/modules/user/` |
 | 修改公网路由 | `gateway-service/.../application.yml`、`nginx/default.conf` |
 | 修改请求 ID 或内部 Header | `RequestIdGlobalFilter`、`RequestIdMdcFilter` |
 | 修改 Nacos 配置 | 两个模块的 `application.yml`、`deploy/nacos/` |
