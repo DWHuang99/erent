@@ -6,6 +6,7 @@
 
 | 路径 | 职责 |
 | --- | --- |
+| `AGENTS.md` | 面向所有贡献者的仓库级代理规则，约束项目文档同步和提交前校验 |
 | `.env` | 本地 Compose 配置，Git 忽略，位于仓库最外层，包含容器内 `LOG_FILE` 路径 |
 | `.env.example` | 可提交的根配置模板，只包含演示占位值，不保存本地日志路径或真实凭据 |
 | `.scripts/` | 本地 Bash 维护脚本：启动 Compose 后端与 Vite 前端、启动 PostgreSQL 并应用待执行 migration |
