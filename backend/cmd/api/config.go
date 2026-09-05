@@ -7,8 +7,9 @@ import (
 )
 
 type apiConfiguration struct {
-	runtime config.Config
-	oai     config.OIDCConfig
+	runtime  config.Config
+	oai      config.OIDCConfig
+	upstream config.UpstreamClientConfig
 }
 
 func loadAPIConfiguration() (apiConfiguration, error) {
@@ -20,8 +21,16 @@ func loadAPIConfiguration() (apiConfiguration, error) {
 	if err != nil {
 		return apiConfiguration{}, fmt.Errorf("load OIDC configuration for oai: %w", err)
 	}
+	var upstreamConfiguration config.UpstreamClientConfig
+	if oaiConfiguration.Enabled() {
+		upstreamConfiguration, err = config.LoadUpstreamClientConfig()
+		if err != nil {
+			return apiConfiguration{}, fmt.Errorf("load upstream configuration: %w", err)
+		}
+	}
 	return apiConfiguration{
-		runtime: runtimeConfiguration,
-		oai:     oaiConfiguration,
+		runtime:  runtimeConfiguration,
+		oai:      oaiConfiguration,
+		upstream: upstreamConfiguration,
 	}, nil
 }

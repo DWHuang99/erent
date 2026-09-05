@@ -25,7 +25,7 @@
 - `package.json`、`package-lock.json`：Vue 3、Vue Router、Axios、Lucide Vue 与 Vite 依赖，以及 `dev`、`build`、`test`、`preview` 脚本；
 - `vite.config.js`：Vue 插件及开发期 `/api`、`/health` 到 `127.0.0.1:8080` 的代理；
 - `Dockerfile`、`.dockerignore`：Node.js stage 以锁文件安装依赖并生成 `dist`，Nginx stage 只携带生产静态产物和运行配置；
-- `nginx.conf`：在容器 `8080` 提供 SPA fallback 和缓存策略，把 `/api/`、`/health/` 代理到 Compose `gateway:8080`，API 代理关闭缓冲并保留客户端转发头；
+- `nginx.conf`：在容器 `8080` 提供 SPA fallback 和缓存策略，把 `/api/`、`/health/`、`/oai/` 代理到 Compose `gateway:8080`，API 代理关闭缓冲并保留客户端转发头；
 - `index.html`、`src/main.js`、`src/App.vue`：单页应用 HTML、Vue 挂载和根路由出口；
 - `src/router/index.js`：`/login`、`/register` 与受保护的 `/` 路由，基于 access token 执行访客/登录态跳转。
 
@@ -47,9 +47,13 @@
 
 ### `api/`
 
-`main.go` 只保留进程退出码、资源生命周期和 HTTP 启动编排；`config.go` 聚合通用运行配置与 OAI OIDC 配置加载；`instances.go` 初始化 logger、PostgreSQL、Redis、Repository、Casbin、JWT 与可选 OIDC 实例，并统一关闭外部资源；`bootstrap.go` 校验初始化角色并幂等创建初始用户；`health.go` 注册 liveness/readiness，其中 readiness 同时检查 PostgreSQL 和 Redis；`routes.go` 创建 `gin.Engine`、挂载通用 Middleware、`/ping`、业务路由和可选 OAI OAuth 路由。生产数据库 migration 仍完全由 Compose migration job 执行，API 不执行自动迁移、不创建 Handler，也不使用 `http.Server`。
+`main.go` 只保留进程退出码、资源生命周期和 HTTP 启动编排；`config.go` 聚合通用运行配置与 OAI OIDC 配置加载；`instances.go` 初始化 logger、PostgreSQL、Redis、Repository、Casbin、JWT 与可选 OIDC、upstream gRPC 连接和 directory 实例，并统一关闭外部资源；`bootstrap.go` 校验初始化角色并幂等创建初始用户；`health.go` 注册 liveness/readiness，其中 readiness 检查 PostgreSQL、Redis，OAuth 启用时额外检查 upstream gRPC health；`routes.go` 创建 `gin.Engine`、挂载通用 Middleware、`/ping`、业务路由和可选 OAI OAuth 路由。生产数据库 migration 仍完全由 Compose migration job 执行，API 不执行自动迁移、不创建 Handler，也不使用 `http.Server`。
 
 `bootstrap_test.go` 覆盖空配置、非法角色和幂等创建；`health_test.go` 覆盖健康端点及 Redis 不可用时的 readiness `503`。
+
+### `upstream/main.go`、`grpc-healthcheck/main.go`
+
+`upstream` 加载独立的 gRPC/超时/mTLS 与 OAI 配置，初始化 provider discovery，同步阻塞运行 gRPC 服务，收到 SIGTERM 后排空请求，超时强制关闭。`grpc-healthcheck` 在 2s 内调用标准 gRPC health，可使用单独的客户端证书；进程不依赖 JWT、数据库或 Redis。
 
 ### `gateway/main.go`、`main_test.go`
 
@@ -67,6 +71,8 @@ distroless 容器 readiness 客户端，默认访问 `127.0.0.1:8080/health/read
 - `OIDCConfig`、`LoadOIDCConfig`：按 provider 名生成环境变量前缀，加载 issuer、client、secret 与 redirect URL；整组为空时禁用，部分配置或非法 URL 会拒绝启动；
 - `Load`/`load`：环境变量加载与校验，JWT Secret 没有代码默认值且至少 32 字符；
 - `positiveDuration`、`nonNegativeInt`、`booleanValue`、`validateAddress`：解析辅助函数。
+
+`upstream.go` 定义 `UpstreamClientConfig`、`UpstreamServerConfig` 和 `GRPCTLSConfig`，分别加载目标/监听地址、RPC/token/discovery/shutdown 超时与成组的 mTLS 证书路径；`upstream_test.go` 覆盖默认值、覆盖值及非法地址、时长和证书组合。
 
 ### `config_test.go`
 
@@ -172,14 +178,15 @@ POST /api/v1/auth/logout
 ### 通用 OAuth 层
 
 - `oauth_handler.go`：`OauthHandler`/`NewOauthHandler`、`Login`、`Callback`；生成随机 state 与 PKCE verifier，映射无效 state、provider 拒绝、兑换及保存错误；Handler 直接依赖统一的具体 `*OauthService`；
-- `oauth_service.go`：`OauthService`/`NewOauthService`、`StoreFlow`、`PopFlow`、`AuthCodeURL`、`Exchange`、`SaveToken` 与 `ErrInvalidOAuthState`；使用 Redis 一次性消费登录流程并根据注入的 `OIDCAuth` 复用不同 provider；`SaveToken` 当前为空实现；
+- `oauth_service.go`：`OauthService`/`NewOauthService`、`StoreFlow`、`PopFlow`、`AuthCodeURL`、`Exchange`、`SaveToken` 与 `ErrInvalidOAuthState`；使用 Redis 一次性消费登录流程并根据注入的 `OIDCAuth` 生成授权地址，通过使用方定义的 `TokenExchanger` 接口调用 directory 并传递固定 provider；`SaveToken` 当前为空实现；
+- `errors.go`：定义不依赖 gRPC 的兑换业务错误；`oauth_exchange_test.go` 验证参数传递、HTTP 400/502/503/504 映射和错误信息隔离。
 - `oauth_routes.go`：注册 `GET /login` 与 `GET /callback`，实际前缀由调用方的 Gin group 决定；
 - `oauth_handler_test.go`：使用真实 Service 和 miniredis 覆盖缺失、无效、过期 state 及 Redis 故障的 HTTP 映射；
-- `oauth_service_test.go`：覆盖 provider 授权参数、S256 PKCE、token exchange verifier、state 一次性消费、Redis 故障及损坏状态数据。
+- `oauth_service_test.go`：覆盖 provider 授权参数、S256 PKCE、state 一次性消费、Redis 故障及损坏状态数据。
 
 ### `oidc/oidc.go`
 
-`LoginFlow` 保存 PKCE verifier 和流程过期时间；`OIDCAuth` 聚合 discovery 后的 `oauth2.Config` 与 provider 专属授权 URL 参数；`NewOIDCAuth` 通过 issuer discovery 构造 authorization/token endpoint。Redis key 直接使用高熵 state，不额外保存 provider ID。
+`LoginFlow` 保存 PKCE verifier 和流程过期时间；`OIDCAuth` 聚合 discovery 后的 `oauth2.Config` 与 provider 专属授权 URL 参数；`NewOIDCAuth` 通过 issuer discovery 构造 authorization/token endpoint，并明确选择 provider 支持的认证方式，避免兑换时探测方式引起重复请求。Redis key 直接使用高熵 state，不额外保存 provider ID。
 
 ### `openai/oai_config.go`
 
@@ -210,23 +217,33 @@ GET /api/v1/auth/verify
 
 ## 11. `internal/router`
 
-`routerall.go` 的 `AuthRouter`、`UserRouter` 接收具体的 `*user.Repository` 和 Casbin Enforcer，在路由包内创建 Service/Handler 并调用模块 `Register*Routes`；`OauthRouter` 接收 Redis client 和任意 `*oidc.OIDCAuth`，创建统一的 OAuth Service/Handler，因此可由不同 Gin group 和 OIDC 配置复用。健康检查和 `/ping` 由 `cmd/api` 注册。`routerall_test.go` 使用内存 SQLite 的真实 GORM Repository，覆盖注册、重复用户名、注册后登录、Casbin 首页权限、refresh Cookie、rotation、logout、当前用户、健康、Request ID 和未认证拒绝。
+`routerall.go` 的 `AuthRouter`、`UserRouter` 接收具体的 `*user.Repository` 和 Casbin Enforcer，在路由包内创建 Service/Handler 并调用模块 `Register*Routes`；`OauthRouter` 接收 Redis client、`*oidc.OIDCAuth`、`oauth.TokenExchanger` 与 provider，创建统一的 OAuth Service/Handler，因此可由不同 Gin group 和 OIDC 配置复用。健康检查和 `/ping` 由 `cmd/api` 注册。`routerall_test.go` 使用内存 SQLite 的真实 GORM Repository，覆盖注册、重复用户名、注册后登录、Casbin 首页权限、refresh Cookie、rotation、logout、当前用户、健康、Request ID 和未认证拒绝。
 
 ## 12. `internal/testdatabase`
 
 `database.go` 的 `Open` 为测试创建相互隔离且开启 `TranslateError` 的纯 Go 内存 SQLite 数据库。测试自行对 SQLite 执行 `AutoMigrate`，用于验证真实 GORM Repository 调用链；它不进入生产启动路径，也不替代 PostgreSQL SQL migration。
 
-## 13. 构建与维护
+## 13. upstream 远程适配
+
+- `proto/upstream.proto`：ExchangeCode、预留 RefreshToken 和 token 响应；使用 Timestamp 表达可选有效期。
+- `internal/rpc/upstream/*.pb.go`：由 protoc 生成的消息、客户端和服务端注册代码，不手工编辑。
+- `internal/directory/upstream/upstreamdirectory.go`：实现 OAuth TokenExchanger，设置 RPC deadline，转换请求/响应和错误；不重试授权码。
+- `internal/upstreamserver/server.go`：校验请求/provider，使用 PKCE VerifierOption 兑换，映射 provider 错误，注册标准 health，处理有界排空。
+- `internal/upstreamserver/server_test.go`：真实 gRPC 编解码配合模拟 OIDC/token 服务，覆盖 PKCE、token 字段、回调链路、错误、deadline、单次兑换与停止行为。
+- `internal/rpc/transport/tls.go`、`tls_test.go`：加载 mTLS 身份与 CA；验证合法连接、缺少客户端身份、错误服务器名及不受信任 CA。
+- `.scripts/update-grpc.ps1`：从协议源重新生成 Go 文件；具体工具版本与启动方式见 `docs/upstream.md`。
+
+## 14. 构建与维护
 
 | 文件 | 职责 |
 | --- | --- |
-| `backend/Dockerfile` | 构建 API、Gateway、healthcheck 两个 distroless target，并提供携带 SQL 的 `migrations` 发布 target；API 镜像为 UID 65532 创建日志目录 |
+| `backend/Dockerfile` | 构建 API、Gateway、Upstream 三个 distroless target 及 HTTP/gRPC healthcheck 工具，并提供携带 SQL 的 `migrations` 发布 target；API 镜像为 UID 65532 创建日志目录 |
 | `frontend/Dockerfile`、`nginx.conf` | 构建 Vue `dist`，再生成提供 SPA 静态文件并同源代理 Gateway 的 Nginx Web 镜像 |
-| `backend/docker-compose.yml` | `ai-gateway-go-auth` 本地 Stack：PostgreSQL、Redis、一次性 migrate job、单体 API、Gateway、Web；后端路径相对于 `backend/`，Web context 指向 `../frontend` |
+| `backend/docker-compose.yml` | `ai-gateway-go-auth` 本地 Stack：PostgreSQL、Redis、一次性 migrate job、API、Upstream、Gateway、Web；后端路径相对于 `backend/`，Web context 指向 `../frontend` |
 | `backend/migrations/` | PostgreSQL schema 的版本化 up/down SQL |
 | `backend/.dockerignore` | 限定后端构建上下文 |
-| `backend/go.mod`、`go.sum` | Gin、GORM、Casbin GORM Adapter、JWT、Redis、OIDC、OAuth2、lumberjack，以及仅用于测试的纯 Go SQLite 依赖 |
-| `.github/workflows/ci.yml` | 分别校验 Go 与 Vue，构建 `backend/` 的 API/Gateway/Migrations targets 和 `frontend/` 的 Web 镜像，全部只验证、不推送 |
-| `.github/workflows/release.yml` | `main`、`v*` tag 或手动触发时向 GHCR 发布 API、Gateway、Migrations、Web 四个同源码版本镜像，附加完整提交 SHA、default-branch `latest` 和 tag 标签 |
+| `backend/go.mod`、`go.sum` | Gin、GORM、Casbin GORM Adapter、JWT、Redis、OIDC、OAuth2、gRPC、Protobuf、lumberjack，以及仅用于测试的纯 Go SQLite 依赖 |
+| `.github/workflows/ci.yml` | 分别校验 Go 与 Vue，构建 `backend/` 的 API/Gateway/Upstream/Migrations targets 和 `frontend/` 的 Web 镜像，全部只验证、不推送 |
+| `.github/workflows/release.yml` | `main`、`v*` tag 或手动触发时向 GHCR 发布 API、Gateway、Upstream、Migrations、Web 五个同源码版本镜像，附加完整提交 SHA、default-branch `latest` 和 tag 标签 |
 
 维护规则：Handler 不直接访问 GORM；Service 直接依赖具体 Repository；Handler 需要替换 Service 时由 Handler 定义最小接口；Repository 不处理 HTTP/Cookie；refresh token 原值不进入日志或 Redis key；改变路由、模型、配置、测试或目录时同步本文和 `ARCHITECTURE.md`。

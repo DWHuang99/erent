@@ -77,7 +77,7 @@ jobs:
 
     strategy:
       matrix:
-        target: [api, gateway, migrations]
+        target: [api, gateway, upstream, migrations]
 
     steps:
       - name: Checkout code

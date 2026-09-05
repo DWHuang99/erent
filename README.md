@@ -1,6 +1,6 @@
 # AI Gateway Go V2
 
-Go 后端现在位于独立的 `backend/`，采用与 `D:/vue-element-plus-admin/backend` 相同方向的模块化单体分层：DTO、Middleware、Auth/User/OAuth Handler-Service-Repository、总 Router 和进程装配彼此分离。数据库访问使用 GORM；已加入可选的通用 OIDC Authorization Code + PKCE 登录骨架并接入 OpenAI 配置，多个业务服务、gRPC 和 JWKS 尚未引入，OAuth token 持久化与登录完成跳转仍待实现。
+Go 后端现在位于独立的 `backend/`，采用与 `D:/vue-element-plus-admin/backend` 相同方向的模块化单体分层：DTO、Middleware、Auth/User/OAuth Handler-Service-Repository、总 Router 和进程装配彼此分离。数据库访问使用 GORM；已加入可选的通用 OIDC Authorization Code + PKCE 登录骨架并接入 OpenAI 配置，OAuth token 兑换已通过 gRPC 拆分到独立 upstream 进程，JWKS 尚未引入，OAuth token 持久化与登录完成跳转仍待实现。
 
 ## 仓库布局
 
@@ -36,7 +36,8 @@ ai-gateway/
 - logout 删除 Redis token，且没有 Cookie 时仍幂等成功；
 - 登录和 refresh 会把 Casbin 计算出的角色、权限写入 access JWT；
 - `/users/me` 和 `/auth/verify` 经 JWT Filter 后回查数据库，并返回 Casbin 角色与权限；
-- Gateway 只代理唯一单体 API。
+- Gateway 代理 API；API 经 gRPC 调用独立 upstream 完成 OAuth token 兑换。
+- Nginx/Vite 代理 `/oai/`，授权入口为 `GET /oai/login`，回调为 `GET /oai/callback`。
 
 当前路由：
 
@@ -49,7 +50,7 @@ ai-gateway/
 | `GET` | `/api/v1/users/me` | Bearer JWT 验证并返回当前用户 |
 | `GET` | `/api/v1/auth/verify` | 当前用户验证兼容入口 |
 | `GET` | `/health/live` | 进程 liveness |
-| `GET` | `/health/ready` | API 检查 PostgreSQL 和 Redis；Gateway 代理该结果 |
+| `GET` | `/health/ready` | API 检查 PostgreSQL、Redis，启用 OAuth 时额外检查 upstream；Gateway 代理该结果 |
 
 ## Compose 启动
 
@@ -60,12 +61,12 @@ docker compose --env-file .env -f backend/docker-compose.yml up --build -d
 docker compose --env-file .env -f backend/docker-compose.yml ps -a
 ```
 
-[backend/docker-compose.yml](backend/docker-compose.yml) 是本地 Compose Stack，名称为 `ai-gateway-go-auth`。命令显式使用根 `.env`；API/Gateway 构建上下文和 migration 路径相对于 `backend/`，Web 构建上下文指向同级 `frontend/`。启动顺序为 PostgreSQL healthy → `migrate` 执行完成 → API healthy → Gateway healthy → Nginx Web；Redis 与 migration 并行准备。`migrate` 正常完成后显示为 `Exited (0)`，这是一次性任务的预期状态。
+[backend/docker-compose.yml](backend/docker-compose.yml) 是本地 Compose Stack，名称为 `ai-gateway-go-auth`。命令显式使用根 `.env`；API/Gateway 构建上下文和 migration 路径相对于 `backend/`，Web 构建上下文指向同级 `frontend/`。启动顺序为 PostgreSQL healthy → `migrate` 执行完成 → API healthy → Gateway healthy → Nginx Web；Redis、upstream 与 migration 并行准备，API 同时等待 upstream 健康。`migrate` 正常完成后显示为 `Exited (0)`，这是一次性任务的预期状态。
 
 API 日志以 JSON 同时写入 Docker 标准输出和 `/var/log/ai-gateway/app.log`。文件位于持久化的 `api-logs` named volume，单文件上限 100 MB，最多保留 10 个备份和 30 天并压缩。查看实时日志仍优先使用：
 
 ```powershell
-docker compose --env-file .env -f backend/docker-compose.yml logs -f api gateway web
+docker compose --env-file .env -f backend/docker-compose.yml logs -f api upstream gateway web
 ```
 
 `cmd/healthcheck` 是 distroless 镜像内执行的 HTTP 探测客户端，负责请求 API `main` 暴露的 `/health/ready`；它不是重复的健康检查接口。
@@ -130,7 +131,7 @@ Invoke-RestMethod `
 
 ## 前端开发
 
-Vue 3 管理界面位于与 `backend/` 同级的 `frontend/`。开发服务器会把 `/api` 和 `/health` 请求代理到本机 `127.0.0.1:8080`，因此先启动后端，再启动前端：
+Vue 3 管理界面位于与 `backend/` 同级的 `frontend/`。开发服务器会把 `/api`、`/health` 和 `/oai` 请求代理到本机 `127.0.0.1:8080`，因此先启动后端，再启动前端：
 
 前端 HTTP 请求统一使用 `frontend/src/axios/` 下的 Axios 模块：`config.js` 定义默认拦截器，`service.js` 管理实例和 token 刷新，`index.js` 提供业务请求入口。请求拦截器注入 access token，响应拦截器在 `401` 时共享一次 refresh 请求并重试原请求；refresh token 仍只通过 HttpOnly Cookie 传输。
 
@@ -153,7 +154,7 @@ npm run build
 npm test
 ```
 
-生产构建使用同源 `/api/v1` 与 `/health` 路径。`frontend/Dockerfile` 先通过 Node.js 构建 `dist`，再生成只包含静态产物和运行配置的 Nginx 镜像；`frontend/nginx.conf` 为 Vue Router 提供 SPA fallback，把 `/api/`、`/health/` 转发到 Compose 网络内的 `gateway:8080`，并为 `/assets/` 设置长期缓存。执行前述 Compose 启动命令后可直接访问：
+生产构建使用同源 `/api/v1` 与 `/health` 路径。`frontend/Dockerfile` 先通过 Node.js 构建 `dist`，再生成只包含静态产物和运行配置的 Nginx 镜像；`frontend/nginx.conf` 为 Vue Router 提供 SPA fallback，把 `/api/`、`/health/`、`/oai/` 转发到 Compose 网络内的 `gateway:8080`，并为 `/assets/` 设置长期缓存。执行前述 Compose 启动命令后可直接访问：
 
 ```text
 http://127.0.0.1:8088/login
@@ -163,16 +164,19 @@ Vite 的 `5173` 入口仍用于开发热更新，Nginx 的 `8088` 入口用于�
 
 ## 镜像发布与私有部署
 
-公开仓库的 `.github/workflows/release.yml` 在 `main` push、`v*` tag 或手动运行时发布四个 GHCR 镜像：
+公开仓库的 `.github/workflows/release.yml` 在 `main` push、`v*` tag 或手动运行时发布五个 GHCR 镜像：
 
 ```text
 ghcr.io/dwhuang99/erent-api:<source-sha>
 ghcr.io/dwhuang99/erent-gateway:<source-sha>
+ghcr.io/dwhuang99/erent-upstream:<source-sha>
 ghcr.io/dwhuang99/erent-migrations:<source-sha>
 ghcr.io/dwhuang99/erent-web:<source-sha>
 ```
 
 生产部署位于私有仓库 [DWHuang99/erent-deploy](https://github.com/DWHuang99/erent-deploy)。私有 CD 手动接收同一个完整源码 SHA，拉取四个不可变镜像、执行匹配版本的 migration、启动 Stack 并验证 Nginx → Gateway → API readiness。生产 `.env`、SSH key、服务器地址和审批规则均不进入本公开仓库；配置步骤见 [docs/deployment.md](docs/deployment.md)。
+
+upstream 的独立服务器部署、环境变量、CD 和 GitHub Environment 待服务器确定后在私有仓库配置。当前本地 gRPC 调用链、错误合同、mTLS 和协议生成说明见 [docs/upstream.md](docs/upstream.md)。
 
 ## 配置
 
@@ -191,7 +195,7 @@ ghcr.io/dwhuang99/erent-web:<source-sha>
 | `BOOTSTRAP_ADMIN_USERNAME` | `admin` | 首次启动创建的管理员 |
 | `BOOTSTRAP_ADMIN_ROLE` | `admin` | 初始化用户角色，只允许 `user`、`admin`、`test` |
 
-Compose 内部会将 API 的数据库和 Redis 地址覆盖为 `postgres:5432` 与 `redis:6379`。
+Compose 内部会将 API 的数据库、Redis 和 gRPC 地址覆盖为 `postgres:5432`、`redis:6379` 与 `upstream:50051`。新进程的完整配置见 [docs/upstream.md](docs/upstream.md)。
 
 ## 后端开发
 
