@@ -45,9 +45,11 @@
 
 ## 3. `backend/cmd`
 
-### `api/main.go`
+### `api/`
 
-`main` 只用 `os.Exit(run())` 设置退出码；`run` 初始化并设定全局 logger，随后加载配置并连接已由 Compose migration job 初始化的 PostgreSQL 和 Redis，确保 logger、数据库和 Redis 的延迟关闭会执行，再创建 User Repository、Casbin Enforcer 与 JWT Manager。它不执行生产数据库 migration；它校验初始化角色只能是 `user`、`admin`、`test`，创建 `gin.Engine`、注册 `/ping` 与健康检查后调用 `apirouter.AuthRouter`/`UserRouter`，最后 `router.Run(HTTP_ADDR)`。不创建 Handler，也不使用 `http.Server`。Readiness 同时检查 PostgreSQL 和 Redis。
+`main.go` 只保留进程退出码、资源生命周期和 HTTP 启动编排；`config.go` 聚合通用运行配置与 OAI OIDC 配置加载；`instances.go` 初始化 logger、PostgreSQL、Redis、Repository、Casbin、JWT 与可选 OIDC 实例，并统一关闭外部资源；`bootstrap.go` 校验初始化角色并幂等创建初始用户；`health.go` 注册 liveness/readiness，其中 readiness 同时检查 PostgreSQL 和 Redis；`routes.go` 创建 `gin.Engine`、挂载通用 Middleware、`/ping`、业务路由和可选 OAI OAuth 路由。生产数据库 migration 仍完全由 Compose migration job 执行，API 不执行自动迁移、不创建 Handler，也不使用 `http.Server`。
+
+`bootstrap_test.go` 覆盖空配置、非法角色和幂等创建；`health_test.go` 覆盖健康端点及 Redis 不可用时的 readiness `503`。
 
 ### `gateway/main.go`、`main_test.go`
 
@@ -61,13 +63,14 @@ distroless 容器 readiness 客户端，默认访问 `127.0.0.1:8080/health/read
 
 ### `config.go`
 
-- `Config`：HTTP 地址、PostgreSQL、Redis、必填 JWT Secret、access/refresh TTL、Cookie 和初始化管理员；
+- `Config`：HTTP 地址、PostgreSQL、OIDC discovery 超时、Cookie 和初始化管理员，并通过嵌套的 `RedisConfig`、`JWTConfig` 聚合 Redis 连接参数及必填 JWT Secret、issuer、audience、access/refresh TTL；
+- `OIDCConfig`、`LoadOIDCConfig`：按 provider 名生成环境变量前缀，加载 issuer、client、secret 与 redirect URL；整组为空时禁用，部分配置或非法 URL 会拒绝启动；
 - `Load`/`load`：环境变量加载与校验，JWT Secret 没有代码默认值且至少 32 字符；
 - `positiveDuration`、`nonNegativeInt`、`booleanValue`、`validateAddress`：解析辅助函数。
 
 ### `config_test.go`
 
-覆盖默认值、覆盖值、Redis DB、Cookie bool、JWT Secret/TTL、非法配置和管理员组合。
+覆盖默认值、覆盖值、Redis DB、Cookie bool、JWT Secret/TTL、OIDC discovery 超时、provider 专属 OIDC 配置、非法配置和管理员组合。
 
 ## 5. `backend/internal/logger`
 
@@ -107,7 +110,7 @@ distroless 容器 readiness 客户端，默认访问 `127.0.0.1:8080/health/read
 ### `middleware/jwt`
 
 - `claims.go`：`Claims` 和 `ErrInvalidToken`；
-- `manager.go`：`JWTManager`、`NewJWTManager`、`GenerateToken`、`GenerateTokenWithPermissions`、`ParseToken`，并保存 `RefreshTTL`；
+- `manager.go`：`JWTManager`、接收 `config.JWTConfig` 的 `NewJWTManager`、`GenerateToken`、`GenerateTokenWithPermissions`、`ParseToken`，并保存 `RefreshTTL`；
 - `filter.go`：`JwtFilter` 与身份 Context keys；
 - `manager_test.go`：签发、过期、错误密钥；
 - `filter_test.go`：合法身份和缺少 Bearer token。
@@ -126,7 +129,9 @@ distroless 容器 readiness 客户端，默认访问 `127.0.0.1:8080/health/read
 
 ### `middleware/redis`
 
-- `connect.go`：`Connect` 创建并验证 Redis client；
+- `connect.go`：`Connect` 接收 `config.RedisConfig`，创建并验证 Redis client；
+- `connect_test.go`：使用隔离 Redis 验证 `RedisConfig` 的地址和 DB 会传入 client；
+- `oauth_state.go`：以 `oidc:flow:<state>` 保存 OAuth 登录流程，并通过 Redis `GETDEL` 原子读取删除；
 - `refresh_token.go`：`CreateRefreshToken`、`RotateRefreshToken`、`DeleteRefreshToken`；
 - `newRefreshToken`：生成 256-bit token；
 - `refreshTokenKey`：SHA-256 Redis key；
@@ -162,7 +167,25 @@ POST /api/v1/auth/logout
 
 使用内存 SQLite 上的真实 GORM User Repository、Casbin Enforcer 与 miniredis，覆盖注册、固定角色、bcrypt、重复用户名、非法请求、登录、角色/首页权限 claims、轮换、旧 token 重放拒绝、logout、错误密码和禁用用户。
 
-## 9. `modules/user`
+## 9. `modules/oauth`
+
+### 通用 OAuth 层
+
+- `oauth_handler.go`：`OauthHandler`/`NewOauthHandler`、`Login`、`Callback`；生成随机 state 与 PKCE verifier，映射无效 state、provider 拒绝、兑换及保存错误；Handler 直接依赖统一的具体 `*OauthService`；
+- `oauth_service.go`：`OauthService`/`NewOauthService`、`StoreFlow`、`PopFlow`、`AuthCodeURL`、`Exchange`、`SaveToken` 与 `ErrInvalidOAuthState`；使用 Redis 一次性消费登录流程并根据注入的 `OIDCAuth` 复用不同 provider；`SaveToken` 当前为空实现；
+- `oauth_routes.go`：注册 `GET /login` 与 `GET /callback`，实际前缀由调用方的 Gin group 决定；
+- `oauth_handler_test.go`：使用真实 Service 和 miniredis 覆盖缺失、无效、过期 state 及 Redis 故障的 HTTP 映射；
+- `oauth_service_test.go`：覆盖 provider 授权参数、S256 PKCE、token exchange verifier、state 一次性消费、Redis 故障及损坏状态数据。
+
+### `oidc/oidc.go`
+
+`LoginFlow` 保存 PKCE verifier 和流程过期时间；`OIDCAuth` 聚合 discovery 后的 `oauth2.Config` 与 provider 专属授权 URL 参数；`NewOIDCAuth` 通过 issuer discovery 构造 authorization/token endpoint。Redis key 直接使用高熵 state，不额外保存 provider ID。
+
+### `openai/oai_config.go`
+
+提供 OpenAI 的 `prompt=login`、`id_token_add_organizations=true`、`codex_cli_simplified_flow=true` 授权参数。`OaiScopes` 当前返回空集合，token 持久化、完成跳转、nonce 和 ID token 验证也尚未实现，因此该模块仍是登录流程骨架。
+
+## 10. `modules/user`
 
 ### `model.go`
 
@@ -185,15 +208,15 @@ GET /api/v1/users/me
 GET /api/v1/auth/verify
 ```
 
-## 10. `internal/router`
+## 11. `internal/router`
 
-`routerall.go` 的 `AuthRouter`、`UserRouter` 接收具体的 `*user.Repository` 和 Casbin Enforcer，在路由包内创建 Service/Handler 并调用模块 `Register*Routes`。健康检查和 `/ping` 由 `cmd/api` 注册。`routerall_test.go` 使用内存 SQLite 的真实 GORM Repository，覆盖注册、重复用户名、注册后登录、Casbin 首页权限、refresh Cookie、rotation、logout、当前用户、健康、Request ID 和未认证拒绝。
+`routerall.go` 的 `AuthRouter`、`UserRouter` 接收具体的 `*user.Repository` 和 Casbin Enforcer，在路由包内创建 Service/Handler 并调用模块 `Register*Routes`；`OauthRouter` 接收 Redis client 和任意 `*oidc.OIDCAuth`，创建统一的 OAuth Service/Handler，因此可由不同 Gin group 和 OIDC 配置复用。健康检查和 `/ping` 由 `cmd/api` 注册。`routerall_test.go` 使用内存 SQLite 的真实 GORM Repository，覆盖注册、重复用户名、注册后登录、Casbin 首页权限、refresh Cookie、rotation、logout、当前用户、健康、Request ID 和未认证拒绝。
 
-## 11. `internal/testdatabase`
+## 12. `internal/testdatabase`
 
 `database.go` 的 `Open` 为测试创建相互隔离且开启 `TranslateError` 的纯 Go 内存 SQLite 数据库。测试自行对 SQLite 执行 `AutoMigrate`，用于验证真实 GORM Repository 调用链；它不进入生产启动路径，也不替代 PostgreSQL SQL migration。
 
-## 12. 构建与维护
+## 13. 构建与维护
 
 | 文件 | 职责 |
 | --- | --- |
@@ -202,7 +225,7 @@ GET /api/v1/auth/verify
 | `backend/docker-compose.yml` | `ai-gateway-go-auth` 本地 Stack：PostgreSQL、Redis、一次性 migrate job、单体 API、Gateway、Web；后端路径相对于 `backend/`，Web context 指向 `../frontend` |
 | `backend/migrations/` | PostgreSQL schema 的版本化 up/down SQL |
 | `backend/.dockerignore` | 限定后端构建上下文 |
-| `backend/go.mod`、`go.sum` | Gin、GORM、Casbin GORM Adapter、JWT、Redis、lumberjack，以及仅用于测试的纯 Go SQLite 依赖 |
+| `backend/go.mod`、`go.sum` | Gin、GORM、Casbin GORM Adapter、JWT、Redis、OIDC、OAuth2、lumberjack，以及仅用于测试的纯 Go SQLite 依赖 |
 | `.github/workflows/ci.yml` | 分别校验 Go 与 Vue，构建 `backend/` 的 API/Gateway/Migrations targets 和 `frontend/` 的 Web 镜像，全部只验证、不推送 |
 | `.github/workflows/release.yml` | `main`、`v*` tag 或手动触发时向 GHCR 发布 API、Gateway、Migrations、Web 四个同源码版本镜像，附加完整提交 SHA、default-branch `latest` 和 tag 标签 |
 

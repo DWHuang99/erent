@@ -1,6 +1,6 @@
 # AI Gateway Go V2
 
-Go 后端现在位于独立的 `backend/`，采用与 `D:/vue-element-plus-admin/backend` 相同方向的模块化单体分层：DTO、Middleware、Auth/User Handler-Service-Repository、总 Router 和进程装配彼此分离。数据库访问使用 GORM；多个业务服务、gRPC、JWKS、OIDC 和 OAuth 均未引入。
+Go 后端现在位于独立的 `backend/`，采用与 `D:/vue-element-plus-admin/backend` 相同方向的模块化单体分层：DTO、Middleware、Auth/User/OAuth Handler-Service-Repository、总 Router 和进程装配彼此分离。数据库访问使用 GORM；已加入可选的通用 OIDC Authorization Code + PKCE 登录骨架并接入 OpenAI 配置，多个业务服务、gRPC 和 JWKS 尚未引入，OAuth token 持久化与登录完成跳转仍待实现。
 
 ## 仓库布局
 

@@ -4,10 +4,22 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"erent/internal/config"
 )
 
+func newTestJWTManager(secret string, accessTTL time.Duration) *JWTManager {
+	return NewJWTManager(config.JWTConfig{
+		Secret:     secret,
+		Issuer:     "issuer",
+		Audience:   "audience",
+		AccessTTL:  accessTTL,
+		RefreshTTL: time.Hour,
+	})
+}
+
 func TestGenerateAndParseToken(t *testing.T) {
-	manager := NewJWTManager("test-secret-with-at-least-32-characters", "issuer", "audience", time.Minute, time.Hour)
+	manager := newTestJWTManager("test-secret-with-at-least-32-characters", time.Minute)
 	token, err := manager.GenerateTokenWithPermissions(42, "alice", []string{"admin"}, []string{"dashboard:view"})
 	if err != nil {
 		t.Fatalf("generate token: %v", err)
@@ -22,15 +34,15 @@ func TestGenerateAndParseToken(t *testing.T) {
 }
 
 func TestParseTokenRejectsExpiredAndWrongSecret(t *testing.T) {
-	expiredManager := NewJWTManager("test-secret-with-at-least-32-characters", "issuer", "audience", -time.Second, time.Hour)
+	expiredManager := newTestJWTManager("test-secret-with-at-least-32-characters", -time.Second)
 	expired, _ := expiredManager.GenerateToken(1, "alice", "user")
 	if _, err := expiredManager.ParseToken(expired); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("expired token error = %v", err)
 	}
 
-	issuer := NewJWTManager("issuer-secret-with-at-least-32-characters", "issuer", "audience", time.Minute, time.Hour)
+	issuer := newTestJWTManager("issuer-secret-with-at-least-32-characters", time.Minute)
 	token, _ := issuer.GenerateToken(1, "alice", "user")
-	other := NewJWTManager("another-secret-with-at-least-32-characters", "issuer", "audience", time.Minute, time.Hour)
+	other := newTestJWTManager("another-secret-with-at-least-32-characters", time.Minute)
 	if _, err := other.ParseToken(token); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("wrong-secret error = %v", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"erent/internal/config"
 	"erent/internal/dto/request"
 	casbinrbac "erent/internal/middleware/casbin"
 	jwtservice "erent/internal/middleware/jwt"
@@ -18,6 +19,16 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
+
+func testJWTManager() *jwtservice.JWTManager {
+	return jwtservice.NewJWTManager(config.JWTConfig{
+		Secret:     "test-secret-with-at-least-32-characters",
+		Issuer:     "issuer",
+		Audience:   "audience",
+		AccessTTL:  time.Minute,
+		RefreshTTL: time.Hour,
+	})
+}
 
 func testRedisClient(t *testing.T) *redis.Client {
 	t.Helper()
@@ -66,7 +77,7 @@ func seedUser(t *testing.T, database *gorm.DB, username, password string, active
 func TestLoginIssuesTokenForValidUser(t *testing.T) {
 	database, repository := testUserRepository(t)
 	seedUser(t, database, "alice", "correct-password", true)
-	manager := jwtservice.NewJWTManager("test-secret-with-at-least-32-characters", "issuer", "audience", time.Minute, time.Hour)
+	manager := testJWTManager()
 	service := NewService(repository, manager, testRedisClient(t), testEnforcer(t))
 
 	accessToken, refreshToken, exists, err := service.Login(context.Background(), request.LoginRequest{Username: "alice", Password: "correct-password"})
@@ -90,7 +101,7 @@ func TestLoginIssuesTokenForValidUser(t *testing.T) {
 }
 
 func TestLoginRejectsMissingWrongPasswordAndDisabledUser(t *testing.T) {
-	manager := jwtservice.NewJWTManager("test-secret-with-at-least-32-characters", "issuer", "audience", time.Minute, time.Hour)
+	manager := testJWTManager()
 
 	_, missingRepository := testUserRepository(t)
 	missing := NewService(missingRepository, manager, testRedisClient(t), testEnforcer(t))

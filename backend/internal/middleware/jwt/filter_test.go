@@ -11,7 +11,7 @@ import (
 
 func TestJwtFilterStoresVerifiedIdentity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	manager := NewJWTManager("test-secret-with-at-least-32-characters", "issuer", "audience", time.Minute, time.Hour)
+	manager := newTestJWTManager("test-secret-with-at-least-32-characters", time.Minute)
 	token, _ := manager.GenerateToken(7, "alice", "admin")
 	router := gin.New()
 	router.GET("/protected", JwtFilter(manager), func(c *gin.Context) {
@@ -28,7 +28,7 @@ func TestJwtFilterStoresVerifiedIdentity(t *testing.T) {
 }
 
 func TestJwtFilterRejectsMissingToken(t *testing.T) {
-	manager := NewJWTManager("test-secret-with-at-least-32-characters", "issuer", "audience", time.Minute, time.Hour)
+	manager := newTestJWTManager("test-secret-with-at-least-32-characters", time.Minute)
 	router := gin.New()
 	router.GET("/protected", JwtFilter(manager), func(c *gin.Context) { c.Status(http.StatusNoContent) })
 	response := httptest.NewRecorder()
