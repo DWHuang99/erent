@@ -4,6 +4,8 @@ import (
 	"strconv"
 	"time"
 
+	"erent/internal/config"
+
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -15,9 +17,13 @@ type JWTManager struct {
 	RefreshTTL time.Duration
 }
 
-func NewJWTManager(secret, issuer, audience string, ttl, refreshTTL time.Duration) *JWTManager {
+func NewJWTManager(configuration config.JWTConfig) *JWTManager {
 	return &JWTManager{
-		secret: []byte(secret), issuer: issuer, audience: audience, ttl: ttl, RefreshTTL: refreshTTL,
+		secret:     []byte(configuration.Secret),
+		issuer:     configuration.Issuer,
+		audience:   configuration.Audience,
+		ttl:        configuration.AccessTTL,
+		RefreshTTL: configuration.RefreshTTL,
 	}
 }
 

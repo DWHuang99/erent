@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"erent/internal/config"
 	casbinrbac "erent/internal/middleware/casbin"
 	"erent/internal/middleware/httpserver"
 	jwtservice "erent/internal/middleware/jwt"
@@ -23,6 +24,16 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 )
+
+func testJWTManager() *jwtservice.JWTManager {
+	return jwtservice.NewJWTManager(config.JWTConfig{
+		Secret:     "test-secret-with-at-least-32-characters",
+		Issuer:     "issuer",
+		Audience:   "audience",
+		AccessTTL:  time.Minute,
+		RefreshTTL: time.Hour,
+	})
+}
 
 func newTestRouter(t *testing.T, repository *user.Repository, manager *jwtservice.JWTManager, redisClient *redis.Client) *gin.Engine {
 	t.Helper()
@@ -69,7 +80,7 @@ func TestLoginAndCurrentUserFlow(t *testing.T) {
 		t.Fatalf("seed user: %v", err)
 	}
 
-	manager := jwtservice.NewJWTManager("test-secret-with-at-least-32-characters", "issuer", "audience", time.Minute, time.Hour)
+	manager := testJWTManager()
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	defer redisClient.Close()
@@ -132,7 +143,7 @@ func TestRegisterAndLoginFlow(t *testing.T) {
 		t.Fatalf("migrate users: %v", err)
 	}
 	repository := user.NewRepository(database)
-	manager := jwtservice.NewJWTManager("test-secret-with-at-least-32-characters", "issuer", "audience", time.Minute, time.Hour)
+	manager := testJWTManager()
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	defer redisClient.Close()
@@ -181,7 +192,7 @@ func TestHealthAndRequestID(t *testing.T) {
 }
 
 func TestProtectedRouteRequiresBearerToken(t *testing.T) {
-	manager := jwtservice.NewJWTManager("test-secret-with-at-least-32-characters", "issuer", "audience", time.Minute, time.Hour)
+	manager := testJWTManager()
 	router := newTestRouter(t, nil, manager, nil)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/users/me", nil))
