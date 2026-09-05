@@ -35,7 +35,7 @@ func newRouter(configuration apiConfiguration, instances *applicationInstances, 
 	)
 	apirouter.UserRouter(api, instances.userRepository, instances.jwtManager, instances.casbinEnforcer)
 	if instances.oaiOIDCAuth != nil {
-		apirouter.OauthRouter(router.Group("/oai"), instances.redisClient, instances.oaiOIDCAuth)
+		apirouter.OauthRouter(router.Group("/oai"), instances.redisClient, instances.oaiOIDCAuth, instances.upstreamDirectory, "oai")
 	}
 
 	return router

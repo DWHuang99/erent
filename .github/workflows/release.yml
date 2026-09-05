@@ -30,6 +30,8 @@ jobs:
             target: api
           - image: gateway
             target: gateway
+          - image: upstream
+            target: upstream
           - image: migrations
             target: migrations
 

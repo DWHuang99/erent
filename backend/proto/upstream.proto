@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package upstream;
+option go_package = "erent/internal/rpc/upstream";
+
+import "google/protobuf/timestamp.proto";
+
+service UpstreamService {
+   rpc ExchangeCode(ExchangeCodeRequest) returns (TokenResponse);
+   // Reserved for a later phase; currently returns UNIMPLEMENTED.
+   rpc RefreshToken(RefreshTokenRequest) returns (TokenResponse);
+}
+
+message ExchangeCodeRequest{
+    string code = 1;
+    // PKCE 校验用，对应 oauth2.VerifierOption(flow.Verifier)
+    string code_verifier = 2;
+    string provider = 3;
+}
+
+message RefreshTokenRequest{
+    string refresh_token = 1;
+    string provider = 2;
+}
+
+message TokenResponse{
+    string access_token = 1;
+    string refresh_token = 2;
+    string token_type = 3;
+    google.protobuf.Timestamp expires_at = 4;
+}

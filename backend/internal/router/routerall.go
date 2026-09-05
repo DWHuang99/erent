@@ -47,9 +47,11 @@ func OauthRouter(
 	api *gin.RouterGroup,
 	redisClient *redis.Client,
 	oidcAuth *oidc.OIDCAuth,
+	exchanger oauth.TokenExchanger,
+	provider string,
 ) {
 	oauth.RegisterOauthRoutes(
 		api,
-		oauth.NewOauthHandler(oauth.NewOauthService(redisClient, oidcAuth)),
+		oauth.NewOauthHandler(oauth.NewOauthService(redisClient, oidcAuth, exchanger, provider)),
 	)
 }

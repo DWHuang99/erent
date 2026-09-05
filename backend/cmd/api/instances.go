@@ -10,6 +10,7 @@ import (
 	"os"
 
 	dbconnect "erent/internal/database/connect"
+	upstreamdirectory "erent/internal/directory/upstream"
 	applogger "erent/internal/logger"
 	casbinrbac "erent/internal/middleware/casbin"
 	jwtservice "erent/internal/middleware/jwt"
@@ -17,18 +18,23 @@ import (
 	"erent/internal/modules/oauth/oidc"
 	"erent/internal/modules/oauth/openai"
 	"erent/internal/modules/user"
+	"erent/internal/rpc/transport"
+	"erent/internal/rpc/upstream"
 
 	"github.com/casbin/casbin/v3"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/grpc"
 )
 
 type applicationInstances struct {
-	sqlDatabase    *sql.DB
-	redisClient    *redis.Client
-	userRepository *user.Repository
-	casbinEnforcer *casbin.SyncedEnforcer
-	jwtManager     *jwtservice.JWTManager
-	oaiOIDCAuth    *oidc.OIDCAuth
+	sqlDatabase        *sql.DB
+	redisClient        *redis.Client
+	userRepository     *user.Repository
+	casbinEnforcer     *casbin.SyncedEnforcer
+	jwtManager         *jwtservice.JWTManager
+	oaiOIDCAuth        *oidc.OIDCAuth
+	upstreamConnection *grpc.ClientConn
+	upstreamDirectory  *upstreamdirectory.Directory
 }
 
 func newApplicationLogger() (*slog.Logger, io.Closer, error) {
@@ -77,6 +83,16 @@ func newApplicationInstances(configuration apiConfiguration) (_ *applicationInst
 	instances.jwtManager = jwtservice.NewJWTManager(configuration.runtime.JWT)
 
 	if configuration.oai.Enabled() {
+		credentials, err := transport.ClientCredentials(configuration.upstream.TLS)
+		if err != nil {
+			return nil, fmt.Errorf("initialize upstream transport: %w", err)
+		}
+		instances.upstreamConnection, err = grpc.NewClient(configuration.upstream.Target,
+			grpc.WithTransportCredentials(credentials), grpc.WithDisableRetry())
+		if err != nil {
+			return nil, fmt.Errorf("create upstream gRPC client: %w", err)
+		}
+		instances.upstreamDirectory = upstreamdirectory.New(upstream.NewUpstreamServiceClient(instances.upstreamConnection), configuration.upstream.Timeout)
 		oidcContext, cancelOIDC := context.WithTimeout(
 			context.Background(),
 			configuration.runtime.OIDCDiscoveryTimeout,
@@ -101,6 +117,11 @@ func (i *applicationInstances) Close() error {
 		return nil
 	}
 	var closeErrors []error
+	if i.upstreamConnection != nil {
+		if err := i.upstreamConnection.Close(); err != nil {
+			closeErrors = append(closeErrors, fmt.Errorf("close upstream connection: %w", err))
+		}
+	}
 	if i.redisClient != nil {
 		if err := i.redisClient.Close(); err != nil {
 			closeErrors = append(closeErrors, fmt.Errorf("close redis: %w", err))

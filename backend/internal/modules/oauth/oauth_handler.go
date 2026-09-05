@@ -90,10 +90,19 @@ func (h *OauthHandler) Callback(c *gin.Context) {
 	oauthToken, err := h.service.Exchange(
 		ctx,
 		code,
-		oauth2.VerifierOption(flow.Verifier),
+		flow.Verifier,
 	)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "token exchange failed"})
+		switch {
+		case errors.Is(err, ErrInvalidExchange), errors.Is(err, ErrExchangeRejected):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "token exchange rejected"})
+		case errors.Is(err, ErrProviderUnavailable), errors.Is(err, ErrUpstreamUnavailable):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "oauth service unavailable"})
+		case errors.Is(err, ErrExchangeTimeout):
+			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "token exchange timed out"})
+		default:
+			c.JSON(http.StatusBadGateway, gin.H{"error": "token exchange failed"})
+		}
 		return
 	}
 
