@@ -16,18 +16,29 @@ import (
 
 var ErrInvalidOAuthState = errors.New("invalid oauth state")
 
+// TokenExchanger is implemented by the upstream directory adapter.
+type TokenExchanger interface {
+	Exchange(ctx context.Context, code, verifier, provider string) (*oauth2.Token, error)
+}
+
 type OauthService struct {
 	redisClient *redis.Client
 	oidcAuth    *oidc.OIDCAuth
+	exchanger   TokenExchanger
+	provider    string
 }
 
 func NewOauthService(
 	redisClient *redis.Client,
 	oidcAuth *oidc.OIDCAuth,
+	exchanger TokenExchanger,
+	provider string,
 ) *OauthService {
 	return &OauthService{
 		redisClient: redisClient,
 		oidcAuth:    oidcAuth,
+		exchanger:   exchanger,
+		provider:    provider,
 	}
 }
 
@@ -77,8 +88,11 @@ func (o *OauthService) AuthCodeURL(state string, verifier string) string {
 }
 
 // Exchange 使用授权码兑换 OAuth2 Token。
-func (o *OauthService) Exchange(ctx context.Context, code string, opts ...oauth2.AuthCodeOption) (*oauth2.Token, error) {
-	return o.oidcAuth.OauthConfig.Exchange(ctx, code, opts...)
+func (o *OauthService) Exchange(ctx context.Context, code, verifier string) (*oauth2.Token, error) {
+	if o.exchanger == nil {
+		return nil, ErrUpstreamUnavailable
+	}
+	return o.exchanger.Exchange(ctx, code, verifier, o.provider)
 }
 
 func (o *OauthService) SaveToken(_ context.Context, _ *oauth2.Token) error {

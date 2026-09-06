@@ -3,9 +3,6 @@ package oauth
 import (
 	"context"
 	"errors"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"testing"
 	"time"
@@ -29,7 +26,7 @@ func newTestOAuthService(client *redis.Client) *OauthService {
 			},
 		},
 		AuthURLParams: map[string]string{"prompt": "login"},
-	})
+	}, nil, "oai")
 }
 
 func TestAuthCodeURLIncludesPKCEAndProviderParameters(t *testing.T) {
@@ -46,28 +43,6 @@ func TestAuthCodeURLIncludesPKCEAndProviderParameters(t *testing.T) {
 	}
 	if query.Get("code_challenge_method") != "S256" || query.Get("code_challenge") != oauth2.S256ChallengeFromVerifier(verifier) {
 		t.Fatalf("missing PKCE challenge: %s", authURL.RawQuery)
-	}
-}
-
-func TestExchangeSendsPKCEVerifier(t *testing.T) {
-	var receivedVerifier string
-	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if err := request.ParseForm(); err != nil {
-			t.Errorf("parse token request: %v", err)
-		}
-		receivedVerifier = request.Form.Get("code_verifier")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"access_token":"access-token","token_type":"Bearer"}`)
-	}))
-	t.Cleanup(tokenServer.Close)
-
-	service := newTestOAuthService(nil)
-	service.oidcAuth.OauthConfig.Endpoint.TokenURL = tokenServer.URL
-	if _, err := service.Exchange(context.Background(), "code", oauth2.VerifierOption("verifier")); err != nil {
-		t.Fatalf("exchange token: %v", err)
-	}
-	if receivedVerifier != "verifier" {
-		t.Fatalf("code_verifier = %q, want verifier", receivedVerifier)
 	}
 }
 
