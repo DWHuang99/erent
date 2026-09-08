@@ -7,9 +7,10 @@ import (
 )
 
 type apiConfiguration struct {
-	runtime  config.Config
-	oai      config.OIDCConfig
-	upstream config.UpstreamClientConfig
+	runtime            config.Config
+	oai                config.OIDCConfig
+	upstream           config.UpstreamClientConfig
+	oauthEncryptionKey []byte
 }
 
 func loadAPIConfiguration() (apiConfiguration, error) {
@@ -22,15 +23,21 @@ func loadAPIConfiguration() (apiConfiguration, error) {
 		return apiConfiguration{}, fmt.Errorf("load OIDC configuration for oai: %w", err)
 	}
 	var upstreamConfiguration config.UpstreamClientConfig
+	var encryptionKey []byte
 	if oaiConfiguration.Enabled() {
+		encryptionKey, err = config.LoadOAuthEncryptionKey()
+		if err != nil {
+			return apiConfiguration{}, err
+		}
 		upstreamConfiguration, err = config.LoadUpstreamClientConfig()
 		if err != nil {
 			return apiConfiguration{}, fmt.Errorf("load upstream configuration: %w", err)
 		}
 	}
 	return apiConfiguration{
-		runtime:  runtimeConfiguration,
-		oai:      oaiConfiguration,
-		upstream: upstreamConfiguration,
+		runtime:            runtimeConfiguration,
+		oai:                oaiConfiguration,
+		upstream:           upstreamConfiguration,
+		oauthEncryptionKey: encryptionKey,
 	}, nil
 }

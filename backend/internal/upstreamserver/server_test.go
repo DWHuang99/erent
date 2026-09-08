@@ -41,7 +41,7 @@ func testProvider(t *testing.T, handler http.HandlerFunc, clientSecret string) *
 		handler(w, r)
 	}))
 	t.Cleanup(provider.Close)
-	auth, err := oidc.NewOIDCAuth(t.Context(), config.OIDCConfig{Issuer: provider.URL, ClientID: "test-client", ClientSecret: clientSecret, RedirectURL: "http://localhost/oai/callback"}, nil, nil)
+	auth, err := oidc.NewOIDCAuth(t.Context(), config.OIDCConfig{Issuer: provider.URL, ClientID: "test-client", ClientSecret: clientSecret, RedirectURL: "http://localhost/oauth/callback"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,11 +71,11 @@ func TestExchangeRoundTripPreservesTokenAndPKCE(t *testing.T) {
 		if err := r.ParseForm(); err != nil {
 			t.Error(err)
 		}
-		if r.Form.Get("code_verifier") != "pkce-verifier" || r.Form.Get("code_challenge") != "" || r.Form.Get("code") != "authorization-code" || r.Form.Get("redirect_uri") != "http://localhost/oai/callback" || r.Form.Get("client_id") != "test-client" || r.Form.Get("client_secret") != "client-secret" {
+		if r.Form.Get("code_verifier") != "pkce-verifier" || r.Form.Get("code_challenge") != "" || r.Form.Get("code") != "authorization-code" || r.Form.Get("redirect_uri") != "http://localhost/oauth/callback" || r.Form.Get("client_id") != "test-client" || r.Form.Get("client_secret") != "client-secret" {
 			t.Errorf("unexpected token request parameters")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"access_token":"access","refresh_token":"refresh","token_type":"Bearer","expires_in":3600}`)
+		_, _ = fmt.Fprint(w, `{"access_token":"access","refresh_token":"refresh","token_type":"Bearer","expires_in":3600,"id_token":"signed-id-token"}`)
 	}, "client-secret")
 	directory := upstreamdirectory.New(testRPC(t, auth, time.Second), time.Second)
 	before := time.Now()
@@ -88,6 +88,9 @@ func TestExchangeRoundTripPreservesTokenAndPKCE(t *testing.T) {
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("exchange count = %d", calls.Load())
+	}
+	if token.Extra("id_token") != "signed-id-token" {
+		t.Fatal("ID token lost in gRPC round trip")
 	}
 }
 func TestExchangeErrorContract(t *testing.T) {
@@ -149,10 +152,6 @@ func TestExchangeValidatesRequestAndDisabledProvider(t *testing.T) {
 	if _, err := directory.Exchange(t.Context(), "", "verifier", "oai"); !errors.Is(err, oauth.ErrInvalidExchange) {
 		t.Fatalf("invalid code: %v", err)
 	}
-	_, err := client.RefreshToken(t.Context(), &upstream.RefreshTokenRequest{})
-	if status.Code(err) != codes.Unimplemented {
-		t.Fatalf("refresh placeholder = %v", err)
-	}
 }
 func TestExchangeDeadlines(t *testing.T) {
 	for _, test := range []struct {
@@ -193,16 +192,16 @@ func TestCallbackUsesDirectoryAndConsumesState(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
-	service := oauth.NewOauthService(redisClient, auth, directory, "oai")
-	if err := service.StoreFlow("state", oidc.LoginFlow{Verifier: "saved-verifier", ExpiresAt: time.Now().Add(time.Minute)}, t.Context()); err != nil {
+	service := oauth.NewOauthService(redisClient, map[string]*oidc.OIDCAuth{"oai": auth}, directory, nil, nil)
+	if err := service.StoreFlow("state", oidc.LoginFlow{Provider: "oai", UserID: 1, Nonce: "nonce", Verifier: "saved-verifier", ExpiresAt: time.Now().Add(time.Minute)}, t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	oauth.RegisterOauthRoutes(router.Group("/oai"), oauth.NewOauthHandler(service))
-	for i, want := range []int{http.StatusOK, http.StatusBadRequest} {
+	oauth.RegisterOauthRoutes(router.Group("/oauth"), oauth.NewOauthHandler(service), nil)
+	for i, want := range []int{http.StatusBadGateway, http.StatusBadRequest} {
 		response := httptest.NewRecorder()
-		router.ServeHTTP(response, httptest.NewRequest("GET", "/oai/callback?state=state&code=authorization-code", nil))
+		router.ServeHTTP(response, httptest.NewRequest("GET", "/oauth/callback?state=state&code=authorization-code", nil))
 		if response.Code != want {
 			t.Fatalf("callback %d = %d: %s", i, response.Code, response.Body.String())
 		}

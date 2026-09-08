@@ -49,12 +49,18 @@ func (s *server) ExchangeCode(ctx context.Context, request *upstream.ExchangeCod
 		slog.Warn("OAuth token exchange failed", "provider", request.Provider, "code", code.String())
 		return nil, status.Error(code, "token exchange failed")
 	}
+	return tokenResponse(token), nil
+}
+
+func tokenResponse(token *oauth2.Token) *upstream.TokenResponse {
 	response := &upstream.TokenResponse{AccessToken: token.AccessToken, RefreshToken: token.RefreshToken, TokenType: token.TokenType}
+	response.IdToken, _ = token.Extra("id_token").(string)
 	if !token.Expiry.IsZero() {
 		response.ExpiresAt = timestamppb.New(token.Expiry)
 	}
-	return response, nil
+	return response
 }
+
 func exchangeErrorCode(ctx context.Context, err error) codes.Code {
 	if ctx.Err() != nil {
 		return status.FromContextError(ctx.Err()).Code()
@@ -81,6 +87,27 @@ func exchangeErrorCode(ctx context.Context, err error) codes.Code {
 	}
 	return codes.Internal
 }
+
+func (s *server) RefreshToken(ctx context.Context, request *upstream.RefreshTokenRequest) (*upstream.TokenResponse, error) {
+	if request == nil || strings.TrimSpace(request.RefreshToken) == "" || strings.TrimSpace(request.Provider) == "" {
+		return nil, status.Error(codes.InvalidArgument, "refresh_token and provider are required")
+	}
+	auth := s.oidcAuth[request.Provider]
+	if auth == nil || auth.OauthConfig == nil {
+		return nil, status.Error(codes.FailedPrecondition, "provider is not configured")
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	token, err := auth.OauthConfig.TokenSource(ctx, &oauth2.Token{RefreshToken: request.RefreshToken}).Token()
+	if err != nil {
+		code := exchangeErrorCode(ctx, err)
+		// Never forward provider response bodies or credential-bearing error text.
+		slog.Warn("OAuth token refresh failed", "provider", request.Provider, "code", code.String())
+		return nil, status.Error(code, "token refresh failed")
+	}
+	return tokenResponse(token), nil
+}
+
 func Serve(ctx context.Context, cfg config.UpstreamServerConfig, oidcAuth map[string]*oidc.OIDCAuth) error {
 	credentials, err := transport.ServerCredentials(cfg.TLS)
 	if err != nil {

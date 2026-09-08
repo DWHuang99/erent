@@ -141,6 +141,7 @@ type TokenResponse struct {
 	RefreshToken  string                 `protobuf:"bytes,2,opt,name=refresh_token,json=refreshToken,proto3" json:"refresh_token,omitempty"`
 	TokenType     string                 `protobuf:"bytes,3,opt,name=token_type,json=tokenType,proto3" json:"token_type,omitempty"`
 	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	IdToken       string                 `protobuf:"bytes,5,opt,name=id_token,json=idToken,proto3" json:"id_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -203,6 +204,13 @@ func (x *TokenResponse) GetExpiresAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *TokenResponse) GetIdToken() string {
+	if x != nil {
+		return x.IdToken
+	}
+	return ""
+}
+
 var File_proto_upstream_proto protoreflect.FileDescriptor
 
 const file_proto_upstream_proto_rawDesc = "" +
@@ -214,14 +222,15 @@ const file_proto_upstream_proto_rawDesc = "" +
 	"\bprovider\x18\x03 \x01(\tR\bprovider\"V\n" +
 	"\x13RefreshTokenRequest\x12#\n" +
 	"\rrefresh_token\x18\x01 \x01(\tR\frefreshToken\x12\x1a\n" +
-	"\bprovider\x18\x02 \x01(\tR\bprovider\"\xb1\x01\n" +
+	"\bprovider\x18\x02 \x01(\tR\bprovider\"\xcc\x01\n" +
 	"\rTokenResponse\x12!\n" +
 	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\x12#\n" +
 	"\rrefresh_token\x18\x02 \x01(\tR\frefreshToken\x12\x1d\n" +
 	"\n" +
 	"token_type\x18\x03 \x01(\tR\ttokenType\x129\n" +
 	"\n" +
-	"expires_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt2\xa1\x01\n" +
+	"expires_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12\x19\n" +
+	"\bid_token\x18\x05 \x01(\tR\aidToken2\xa1\x01\n" +
 	"\x0fUpstreamService\x12F\n" +
 	"\fExchangeCode\x12\x1d.upstream.ExchangeCodeRequest\x1a\x17.upstream.TokenResponse\x12F\n" +
 	"\fRefreshToken\x12\x1d.upstream.RefreshTokenRequest\x1a\x17.upstream.TokenResponseB\x1dZ\x1berent/internal/rpc/upstreamb\x06proto3"

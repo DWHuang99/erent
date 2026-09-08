@@ -1,8 +1,14 @@
 package oauth
 
-import "github.com/gin-gonic/gin"
+import (
+	jwtservice "erent/internal/middleware/jwt"
 
-func RegisterOauthRoutes(api *gin.RouterGroup, handler *OauthHandler) {
-	api.GET("/login", handler.Login)
+	"github.com/gin-gonic/gin"
+)
+
+func RegisterOauthRoutes(api *gin.RouterGroup, handler *OauthHandler, jwtManager *jwtservice.JWTManager) {
+	api.GET("/login", jwtservice.JwtFilter(jwtManager), handler.Login)
 	api.GET("/callback", handler.Callback)
+	api.GET("/list", jwtservice.JwtFilter(jwtManager), handler.OauthList)
+	api.POST("/refresh", jwtservice.JwtFilter(jwtManager), handler.RefreshToken)
 }

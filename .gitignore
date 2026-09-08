@@ -53,3 +53,5 @@ certs/
 *.pfx
 *.jks
 *.keystore
+
+todo/

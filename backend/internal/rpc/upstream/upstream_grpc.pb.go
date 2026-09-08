@@ -28,7 +28,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type UpstreamServiceClient interface {
 	ExchangeCode(ctx context.Context, in *ExchangeCodeRequest, opts ...grpc.CallOption) (*TokenResponse, error)
-	// Reserved for a later phase; currently returns UNIMPLEMENTED.
+	// Refreshes provider credentials; callers coordinate refresh and persist the result.
 	RefreshToken(ctx context.Context, in *RefreshTokenRequest, opts ...grpc.CallOption) (*TokenResponse, error)
 }
 
@@ -65,7 +65,7 @@ func (c *upstreamServiceClient) RefreshToken(ctx context.Context, in *RefreshTok
 // for forward compatibility.
 type UpstreamServiceServer interface {
 	ExchangeCode(context.Context, *ExchangeCodeRequest) (*TokenResponse, error)
-	// Reserved for a later phase; currently returns UNIMPLEMENTED.
+	// Refreshes provider credentials; callers coordinate refresh and persist the result.
 	RefreshToken(context.Context, *RefreshTokenRequest) (*TokenResponse, error)
 	mustEmbedUnimplementedUpstreamServiceServer()
 }

@@ -1,17 +1,24 @@
 package oauth
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
+	"erent/internal/dto/request"
+	"erent/internal/dto/response"
+	jwtservice "erent/internal/middleware/jwt"
 	"erent/internal/modules/oauth/oidc"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/oauth2"
 )
+
+var AuthenticationRequired = errors.New("authentication required")
 
 type OauthHandler struct {
 	service *OauthService
@@ -32,28 +39,56 @@ func randomValue() (string, error) {
 }
 
 func (h *OauthHandler) Login(c *gin.Context) {
+	userID, ok := c.Get(jwtservice.UserIDContextKey)
+	ownerID, valid := userID.(uint64)
+	if !ok || !valid || ownerID == 0 {
+		response.Error(c, http.StatusUnauthorized, 40100, "authentication required")
+		return
+	}
+	provider := c.Query("provider")
+	if _, err := h.service.authFor(provider); err != nil {
+		if errors.Is(err, ErrProviderUnavailable) {
+			response.Error(c, http.StatusBadRequest, 400, "invalid_provider")
+		} else {
+			response.Error(c, http.StatusServiceUnavailable, 503, "oauth service unavailable")
+		}
+		return
+	}
 	state, err := randomValue()
 	if err != nil {
-		c.JSON(500, gin.H{"error": "生成 state 失败"})
+		response.Error(c, 500, 500, "生成 state 失败")
 		return
 	}
 
 	// PKCE code_verifier。
 	verifier := oauth2.GenerateVerifier()
-
-	if err := h.service.StoreFlow(state, oidc.LoginFlow{
-		Verifier:  verifier,
-		ExpiresAt: time.Now().Add(5 * time.Minute),
-	}, c.Request.Context()); err != nil {
-		c.JSON(500, gin.H{"error": "保存登录状态失败"})
+	nonce, err := randomValue()
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, 500, "generate nonce failed")
 		return
 	}
 
-	authURL := h.service.AuthCodeURL(
-		state,
-		verifier,
-	)
+	authURL, err := h.service.AuthCodeURL(provider, state, verifier, nonce)
+	if err != nil {
+		response.Error(c, http.StatusServiceUnavailable, 503, "oauth service unavailable")
+		return
+	}
+	if err := h.service.StoreFlow(state, oidc.LoginFlow{
+		Provider:  provider,
+		Verifier:  verifier,
+		UserID:    ownerID,
+		Nonce:     nonce,
+		ExpiresAt: time.Now().Add(5 * time.Minute),
+	}, c.Request.Context()); err != nil {
+		response.Error(c, 500, 500, "保存登录状态失败")
+		return
+	}
 
+	if strings.Contains(c.GetHeader("Accept"), "application/json") {
+		c.Header("Cache-Control", "no-store")
+		response.Success(c, gin.H{"url": authURL})
+		return
+	}
 	c.Redirect(302, authURL)
 }
 
@@ -62,28 +97,28 @@ func (h *OauthHandler) Callback(c *gin.Context) {
 	ctx := c.Request.Context()
 	state := c.Query("state")
 	if state == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_state"})
+		response.Error(c, http.StatusBadRequest, 400, "invalid_state")
 		return
 	}
 
 	flow, err := h.service.PopFlow(state, ctx)
-	if errors.Is(err, ErrInvalidOAuthState) || (err == nil && time.Now().After(flow.ExpiresAt)) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_state"})
+	if errors.Is(err, ErrInvalidOAuthState) || (err == nil && (time.Now().After(flow.ExpiresAt) || flow.UserID == 0 || flow.Nonce == "" || flow.Provider == "")) {
+		response.Error(c, http.StatusBadRequest, 400, "invalid_state")
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "load login state failed"})
+		response.Error(c, http.StatusInternalServerError, 500, "load login state failed")
 		return
 	}
 
 	if providerError := c.Query("error"); providerError != "" {
-		c.JSON(400, gin.H{"error": "provider denied"})
+		response.Error(c, 400, 400, "provider denied")
 		return
 	}
 
 	code := c.Query("code")
 	if code == "" {
-		c.JSON(400, gin.H{"error": "missing code"})
+		response.Error(c, 400, 400, "missing code")
 		return
 	}
 
@@ -91,22 +126,95 @@ func (h *OauthHandler) Callback(c *gin.Context) {
 		ctx,
 		code,
 		flow.Verifier,
+		flow.Provider,
 	)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidExchange), errors.Is(err, ErrExchangeRejected):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "token exchange rejected"})
+			response.Error(c, http.StatusBadRequest, 400, "token exchange rejected")
 		case errors.Is(err, ErrProviderUnavailable), errors.Is(err, ErrUpstreamUnavailable):
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "oauth service unavailable"})
+			response.Error(c, http.StatusServiceUnavailable, 503, "oauth service unavailable")
 		case errors.Is(err, ErrExchangeTimeout):
-			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "token exchange timed out"})
+			response.Error(c, http.StatusGatewayTimeout, 504, "token exchange timed out")
 		default:
-			c.JSON(http.StatusBadGateway, gin.H{"error": "token exchange failed"})
+			response.Error(c, http.StatusBadGateway, 502, "token exchange failed")
 		}
 		return
 	}
 
-	if err := h.service.SaveToken(ctx, oauthToken); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "save token failed"})
+	if err := h.service.SaveToken(ctx, oauthToken, flow); err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidIDToken):
+			response.Error(c, http.StatusBadGateway, 502, "invalid provider identity")
+		case errors.Is(err, ErrInvalidOAuthState):
+			response.Error(c, http.StatusBadRequest, 400, "invalid_state")
+		case errors.Is(err, ErrUpstreamUnavailable), errors.Is(err, ErrProviderUnavailable):
+			response.Error(c, http.StatusServiceUnavailable, 503, "oauth service unavailable")
+		default:
+			response.Error(c, http.StatusInternalServerError, 500, "save token failed")
+		}
+		return
 	}
+	response.SuccessWithStatus(c, http.StatusOK, nil, "oauth credentials saved")
+}
+
+func getUserid(c *gin.Context) (uint64, error) {
+	userID, ok := c.Get(jwtservice.UserIDContextKey)
+	ownerID, valid := userID.(uint64)
+	if !ok || !valid || ownerID == 0 {
+		return 0, AuthenticationRequired
+	}
+	return ownerID, nil
+}
+
+func (h *OauthHandler) RefreshToken(c *gin.Context) {
+	ownerID, err := getUserid(c)
+	if err != nil {
+		response.Error(c, http.StatusUnauthorized, 40100, "authentication required")
+		return
+	}
+	var req request.OAuthRefreshRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, 400, "invalid refresh request")
+		return
+	}
+	if err := h.service.RefreshToken(c.Request.Context(), ownerID, req.ID); err != nil {
+		switch {
+		case errors.Is(err, ErrOAuthNotFound):
+			response.Error(c, 404, 404, "oauth credential not found")
+		case errors.Is(err, ErrInvalidRefresh):
+			response.Error(c, 400, 400, "invalid refresh request")
+		case errors.Is(err, ErrRefreshRejected):
+			response.Error(c, 400, 400, "refresh token rejected; reauthorize account")
+		case errors.Is(err, ErrProviderUnavailable), errors.Is(err, ErrUpstreamUnavailable):
+			response.Error(c, 503, 503, "oauth service unavailable")
+		case errors.Is(err, ErrRefreshTimeout), errors.Is(err, context.DeadlineExceeded):
+			response.Error(c, 504, 504, "token refresh timed out")
+		case errors.Is(err, context.Canceled):
+			response.Error(c, 408, 408, "token refresh canceled")
+		case errors.Is(err, ErrRefreshFailed), errors.Is(err, ErrInvalidIDToken):
+			response.Error(c, 502, 502, "invalid provider refresh response")
+		default:
+			response.Error(c, 500, 500, "save refreshed credentials failed")
+		}
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	response.Success(c, gin.H{"message": "refresh success"})
+}
+
+func (h *OauthHandler) OauthList(c *gin.Context) {
+	ctx := c.Request.Context()
+	ownerID, err := getUserid(c)
+	if err != nil {
+		response.Error(c, http.StatusUnauthorized, 40100, "authentication required")
+		return
+	}
+	oauthlist, err := h.service.getUserOauth(ctx, ownerID)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, 500, "load oauth list failed")
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	response.Success(c, gin.H{"oauthlist": oauthlist})
 }

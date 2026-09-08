@@ -37,7 +37,7 @@ func TestCallbackMapsExchangeFailures(t *testing.T) {
 			service := newTestOAuthService(client)
 			exchanger := &exchangeStub{err: test.err}
 			service.exchanger = exchanger
-			if err := service.StoreFlow("state", oidc.LoginFlow{Verifier: "verifier", ExpiresAt: time.Now().Add(time.Minute)}, t.Context()); err != nil {
+			if err := service.StoreFlow("state", oidc.LoginFlow{Provider: "oai", UserID: 1, Nonce: "nonce", Verifier: "verifier", ExpiresAt: time.Now().Add(time.Minute)}, t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			response := testOAuthCallback(service, "/callback?state=state&code=code")
@@ -57,7 +57,11 @@ func TestCallbackMapsExchangeFailures(t *testing.T) {
 	}
 }
 func TestServiceWithoutExchangerReportsUnavailable(t *testing.T) {
-	if _, err := newTestOAuthService(nil).Exchange(context.Background(), "code", "verifier"); !errors.Is(err, ErrUpstreamUnavailable) {
+	if _, err := newTestOAuthService(nil).Exchange(context.Background(), "code", "verifier", "oai"); !errors.Is(err, ErrUpstreamUnavailable) {
 		t.Fatal(err)
 	}
+}
+
+func (s *exchangeStub) RefreshToken(context.Context, string, string) (*oauth2.Token, error) {
+	return nil, ErrRefreshFailed
 }

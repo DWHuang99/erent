@@ -12,6 +12,9 @@ import (
 )
 
 type LoginFlow struct {
+	Provider  string
+	UserID    uint64
+	Nonce     string
 	Verifier  string
 	ExpiresAt time.Time
 }
@@ -19,6 +22,7 @@ type LoginFlow struct {
 type OIDCAuth struct {
 	OauthConfig   *oauth2.Config
 	AuthURLParams map[string]string
+	Verifier      *oidc.IDTokenVerifier
 }
 
 func NewOIDCAuth(
@@ -75,5 +79,8 @@ func NewOIDCAuth(
 	return &OIDCAuth{
 		OauthConfig:   oauthConfig,
 		AuthURLParams: authURLParams,
+		Verifier: provider.Verifier(&oidc.Config{
+			ClientID: OauthConfig.ClientID,
+		}),
 	}, nil
 }

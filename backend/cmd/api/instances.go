@@ -15,6 +15,7 @@ import (
 	casbinrbac "erent/internal/middleware/casbin"
 	jwtservice "erent/internal/middleware/jwt"
 	rdb "erent/internal/middleware/redis"
+	"erent/internal/modules/oauth"
 	"erent/internal/modules/oauth/oidc"
 	"erent/internal/modules/oauth/openai"
 	"erent/internal/modules/user"
@@ -30,9 +31,10 @@ type applicationInstances struct {
 	sqlDatabase        *sql.DB
 	redisClient        *redis.Client
 	userRepository     *user.Repository
+	oauthRepository    *oauth.Repository
 	casbinEnforcer     *casbin.SyncedEnforcer
 	jwtManager         *jwtservice.JWTManager
-	oaiOIDCAuth        *oidc.OIDCAuth
+	oidcAuth           map[string]*oidc.OIDCAuth
 	upstreamConnection *grpc.ClientConn
 	upstreamDirectory  *upstreamdirectory.Directory
 }
@@ -42,7 +44,7 @@ func newApplicationLogger() (*slog.Logger, io.Closer, error) {
 }
 
 func newApplicationInstances(configuration apiConfiguration) (_ *applicationInstances, resultErr error) {
-	instances := &applicationInstances{}
+	instances := &applicationInstances{oidcAuth: make(map[string]*oidc.OIDCAuth)}
 	defer func() {
 		if resultErr != nil {
 			_ = instances.Close()
@@ -71,6 +73,7 @@ func newApplicationInstances(configuration apiConfiguration) (_ *applicationInst
 	}
 	instances.redisClient = redisClient
 	instances.userRepository = user.NewRepository(database)
+	instances.oauthRepository = oauth.NewRepository(database)
 
 	if err := createBootstrapUser(context.Background(), configuration.runtime, instances.userRepository); err != nil {
 		return nil, fmt.Errorf("create bootstrap user: %w", err)
@@ -97,7 +100,7 @@ func newApplicationInstances(configuration apiConfiguration) (_ *applicationInst
 			context.Background(),
 			configuration.runtime.OIDCDiscoveryTimeout,
 		)
-		instances.oaiOIDCAuth, err = oidc.NewOIDCAuth(
+		instances.oidcAuth["oai"], err = oidc.NewOIDCAuth(
 			oidcContext,
 			configuration.oai,
 			openai.OaiAuthURLParams(),

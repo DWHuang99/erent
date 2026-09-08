@@ -46,12 +46,15 @@ func UserRouter(
 func OauthRouter(
 	api *gin.RouterGroup,
 	redisClient *redis.Client,
-	oidcAuth *oidc.OIDCAuth,
+	oidcAuth map[string]*oidc.OIDCAuth,
 	exchanger oauth.TokenExchanger,
-	provider string,
+	repository *oauth.Repository,
+	jwtManager *jwtservice.JWTManager,
+	encryptionKey []byte,
 ) {
 	oauth.RegisterOauthRoutes(
 		api,
-		oauth.NewOauthHandler(oauth.NewOauthService(redisClient, oidcAuth, exchanger, provider)),
+		oauth.NewOauthHandler(oauth.NewOauthService(redisClient, oidcAuth, exchanger, repository, encryptionKey)),
+		jwtManager,
 	)
 }

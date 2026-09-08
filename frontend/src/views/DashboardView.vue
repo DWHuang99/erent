@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   Activity,
   ArrowUpRight,
@@ -23,9 +23,14 @@ import {
 } from '@lucide/vue'
 
 import AppLogo from '../components/AppLogo.vue'
+import OAuthView from './OAuthView.vue'
+import AuthorizedAccountsView from './AuthorizedAccountsView.vue'
 import { clearSession, getCurrentUser, getReadiness, logout } from '../services/auth.js'
 
 const router = useRouter()
+const route = useRoute()
+const isOAuthPage = computed(() => route.name === 'oauth')
+const isAccountsPage = computed(() => route.name === 'authorized-accounts')
 const loading = ref(true)
 const refreshing = ref(false)
 const sidebarOpen = ref(false)
@@ -47,7 +52,7 @@ const navGroups = [
   {
     label: '运行',
     items: [
-      { label: '运行总览', icon: LayoutDashboard, active: true },
+      { label: '运行总览', icon: LayoutDashboard, route: 'dashboard' },
       { label: '用量统计', icon: Activity, upcoming: true },
     ],
   },
@@ -56,6 +61,8 @@ const navGroups = [
     items: [
       { label: 'API Key', icon: KeyRound, upcoming: true },
       { label: 'Provider', icon: Boxes, upcoming: true },
+      { label: 'OAuth 登录', icon: ShieldCheck, route: 'oauth' },
+      { label: '授权账号', icon: UsersRound, route: 'authorized-accounts' },
       { label: '调用日志', icon: FileClock, upcoming: true },
     ],
   },
@@ -107,7 +114,7 @@ async function loadDashboard(showRefresh = false) {
   } catch (error) {
     clearSession()
     errorMessage.value = error instanceof Error ? error.message : '登录状态已失效'
-    await router.replace({ name: 'login', query: { redirect: '/' } })
+    await router.replace({ name: 'login', query: { redirect: route.fullPath } })
   } finally {
     loading.value = false
     refreshing.value = false
@@ -161,7 +168,9 @@ onUnmounted(() => document.removeEventListener('click', closeMenus))
             v-for="item in group.items"
             :key="item.label"
             class="nav-item"
-            :class="{ active: item.active }"
+            :class="{ active: item.route === route.name }"
+            :aria-current="item.route === route.name ? 'page' : undefined"
+            @click="item.route && router.push({ name: item.route }); sidebarOpen = false"
             :disabled="item.upcoming"
             :title="item.upcoming ? '该功能尚未开放' : item.label"
           >
@@ -190,8 +199,8 @@ onUnmounted(() => document.removeEventListener('click', closeMenus))
             <Menu :size="20" />
           </button>
           <div>
-            <span class="breadcrumb">运行 /</span>
-            <strong>运行总览</strong>
+            <span class="breadcrumb">{{ isOAuthPage || isAccountsPage ? '网关' : '运行' }} /</span>
+            <strong>{{ isAccountsPage ? '授权账号处理' : isOAuthPage ? 'OAuth 登录' : '运行总览' }}</strong>
           </div>
         </div>
 
@@ -220,7 +229,9 @@ onUnmounted(() => document.removeEventListener('click', closeMenus))
         </div>
       </header>
 
-      <main class="dashboard-content">
+      <OAuthView v-if="isOAuthPage" />
+      <AuthorizedAccountsView v-else-if="isAccountsPage" />
+      <main v-else class="dashboard-content">
         <section class="page-heading">
           <div>
             <span class="eyebrow">OVERVIEW</span>

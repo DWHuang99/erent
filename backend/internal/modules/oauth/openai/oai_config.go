@@ -9,5 +9,5 @@ func OaiAuthURLParams() map[string]string {
 }
 
 func OaiScopes() []string {
-	return []string{}
+	return []string{"openid", "profile", "email", "offline_access"}
 }

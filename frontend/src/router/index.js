@@ -6,6 +6,18 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     {
+      path: '/authorized-accounts',
+      name: 'authorized-accounts',
+      component: () => import('../views/DashboardView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/oauth',
+      name: 'oauth',
+      component: () => import('../views/DashboardView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/',
       name: 'dashboard',
       component: () => import('../views/DashboardView.vue'),

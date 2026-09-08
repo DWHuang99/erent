@@ -9,25 +9,25 @@
 | `AGENTS.md` | 面向所有贡献者的仓库级代理规则，约束项目文档同步和提交前校验 |
 | `.env` | 本地 Compose 配置，Git 忽略，位于仓库最外层，包含容器内 `LOG_FILE` 路径 |
 | `.env.example` | 可提交的根配置模板，只包含演示占位值，不保存本地日志路径或真实凭据 |
-| `.scripts/` | 本地 Bash 维护脚本：启动 Compose 后端与 Vite 前端、启动 PostgreSQL 并应用待执行 migration |
+| `.scripts/` | 本地 Bash 维护脚本：完整启动、IDE debug 基础设施、数据库 migration |
 | `backend/` | Go module、源码、测试、后端 Dockerfile 和本地 Compose Stack |
 | `frontend/` | Vue 3 + Vite 管理界面，以及构建静态产物并由 Nginx 提供服务的生产镜像 |
-| `docs/deployment.md` | 公开源码仓库、GHCR 四镜像和私有 `erent-deploy` 的发布/部署边界 |
+| `docs/deployment.md` | 公开源码仓库、GHCR 五镜像和私有 `erent-deploy` 的发布/部署边界 |
 
 旧 `deploy/`、K8s 和移动后空目录已经删除。
 
-`.scripts/start.sh` 检查 Docker、Node.js、npm 与前端依赖，显式传入根 `.env` 和 `backend/docker-compose.yml`，构建并启动 PostgreSQL、migration、Redis、API、Gateway、Nginx Web 后启动 `frontend/` 的 Vite 开发服务器，并兼容在 WSL 中复用 Windows Node.js；`.scripts/update-database.sh` 使用同一 Compose 入口启动 PostgreSQL，并通过 `migrate` job 应用所有待执行版本。
+`.scripts/start.sh` 检查 Docker、Node.js、npm 与前端依赖。默认模式显式传入根 `.env` 和 `backend/docker-compose.yml`，构建并启动完整 Compose Stack 后启动 `frontend/` 的 Vite 开发服务器；`debug`/`--debug` 模式使用 `.scripts/docker-compose.debug.yml` 仅向 `127.0.0.1:6379` 发布 Redis，停止容器化应用层，只启动 PostgreSQL、Redis、migration 与 Vite，供 IDE 启动 `cmd/upstream` 和 `cmd/api`。脚本兼容在 WSL 中复用 Windows Node.js；`.scripts/update-database.sh` 使用同一基础 Compose 入口启动 PostgreSQL，并通过 `migrate` job 应用所有待执行版本。
 
 ## 2. `frontend`
 
 ### 工程入口与路由
 
 - `package.json`、`package-lock.json`：Vue 3、Vue Router、Axios、Lucide Vue 与 Vite 依赖，以及 `dev`、`build`、`test`、`preview` 脚本；
-- `vite.config.js`：Vue 插件及开发期 `/api`、`/health` 到 `127.0.0.1:8080` 的代理；
+- `vite.config.js`：Vue 插件及开发期 `/api`、`/health`、`/oauth` 到 `127.0.0.1:8080` 的代理；
 - `Dockerfile`、`.dockerignore`：Node.js stage 以锁文件安装依赖并生成 `dist`，Nginx stage 只携带生产静态产物和运行配置；
-- `nginx.conf`：在容器 `8080` 提供 SPA fallback 和缓存策略，把 `/api/`、`/health/`、`/oai/` 代理到 Compose `gateway:8080`，API 代理关闭缓冲并保留客户端转发头；
+- `nginx.conf`：在容器 `8080` 提供 SPA fallback 和缓存策略，把 `/api/`、`/health/`、`/oauth/` 代理到 Compose `gateway:8080`，API 代理关闭缓冲并保留客户端转发头；
 - `index.html`、`src/main.js`、`src/App.vue`：单页应用 HTML、Vue 挂载和根路由出口；
-- `src/router/index.js`：`/login`、`/register` 与受保护的 `/` 路由，基于 access token 执行访客/登录态跳转。
+- `src/router/index.js`：`/login`、`/register` 与受保护的 `/`、`/oauth`、`/authorized-accounts` 路由，基于 access token 执行访客/登录态跳转。
 
 ### 页面、组件与认证
 
@@ -43,11 +43,16 @@
 - `src/styles/main.css`：参考 CLI Proxy API Management Center 的暖白/黑色主题 tokens、全局基础样式与深色主题；
 - `tests/auth.test.js`：覆盖持久/会话 token 保存、登录 401、注册请求合同、重复用户名中文反馈、会话清理、401 刷新重试与并发刷新合并。
 
+- `src/services/oauth.js`：授权 URL 获取、回调 URL/state 校验与提交、账号列表及凭证刷新，校验统一响应合同并映射错误。
+- `src/views/OAuthView.vue`：发起 Codex 授权、保存当前流程、手动回调入口和结果反馈。
+- `src/views/AuthorizedAccountsView.vue`：展示当前用户账号元数据、详情、重新授权入口及手动刷新按钮；刷新后重新加载列表。
+- `tests/oauth.test.js`：覆盖授权链接安全校验、state/回调合同、列表及刷新请求、响应与错误映射。
+
 ## 3. `backend/cmd`
 
 ### `api/`
 
-`main.go` 只保留进程退出码、资源生命周期和 HTTP 启动编排；`config.go` 聚合通用运行配置与 OAI OIDC 配置加载；`instances.go` 初始化 logger、PostgreSQL、Redis、Repository、Casbin、JWT 与可选 OIDC、upstream gRPC 连接和 directory 实例，并统一关闭外部资源；`bootstrap.go` 校验初始化角色并幂等创建初始用户；`health.go` 注册 liveness/readiness，其中 readiness 检查 PostgreSQL、Redis，OAuth 启用时额外检查 upstream gRPC health；`routes.go` 创建 `gin.Engine`、挂载通用 Middleware、`/ping`、业务路由和可选 OAI OAuth 路由。生产数据库 migration 仍完全由 Compose migration job 执行，API 不执行自动迁移、不创建 Handler，也不使用 `http.Server`。
+`main.go` 只保留进程退出码、资源生命周期和 HTTP 启动编排；`config.go` 聚合通用运行配置与 OAI OIDC 配置加载；`instances.go` 初始化 logger、PostgreSQL、Redis、Repository、Casbin、JWT 与可选 OIDC、upstream gRPC 连接和 directory 实例，并统一关闭外部资源；`bootstrap.go` 校验初始化角色并幂等创建初始用户；`health.go` 注册 liveness/readiness，其中 readiness 检查 PostgreSQL、Redis，OAuth 启用时额外检查 upstream gRPC health；`routes.go` 创建 `gin.Engine`、挂载通用 Middleware、`/ping`、业务路由和统一 OAuth 路由。生产数据库 migration 仍完全由 Compose migration job 执行，API 不执行自动迁移、不创建 Handler，也不使用 `http.Server`。
 
 `bootstrap_test.go` 覆盖空配置、非法角色和幂等创建；`health_test.go` 覆盖健康端点及 Redis 不可用时的 readiness `503`。
 
@@ -78,6 +83,8 @@ distroless 容器 readiness 客户端，默认访问 `127.0.0.1:8080/health/read
 
 覆盖默认值、覆盖值、Redis DB、Cookie bool、JWT Secret/TTL、OIDC discovery 超时、provider 专属 OIDC 配置、非法配置和管理员组合。
 
+`oauth.go` 的 `LoadOAuthEncryptionKey` 校验 Base64 编码的 32 字节 `OAUTH_ENCRYPTION_KEY`；`oauth_test.go` 覆盖合法、缺失与非法密钥。API 启用 OAuth 时加载该持久密钥。
+
 ## 5. `backend/internal/logger`
 
 ### `logger.go`、`logger_test.go`
@@ -97,11 +104,15 @@ distroless 容器 readiness 客户端，默认访问 `127.0.0.1:8080/health/read
 
 - `000001_users.up.sql` / `.down.sql`：创建/删除 `users`，角色字段限制为 `user`、`admin`、`test`；
 - `000002_casbin_rbac.up.sql` / `.down.sql`：创建/删除 `casbin_rule`，初始化三角色 `dashboard:view` policy，并迁移已有用户 grouping；
+- `000003_oauth_infos.up.sql` / `.down.sql`：创建/删除上游凭据表 `oauth_infos`，保存 token、账号、邮箱、禁用状态、类型及可空的到期/刷新时间；
+- `000004_oauth_owner.up.sql` / `.down.sql`：增加/删除 user_id、用户级联删除外键和用户/类型/账号唯一索引；拒绝迁移无所属用户的既有记录。
 - Compose 的 `migrate` 服务使用 `migrate/migrate:v4.19.1` 执行并由 `schema_migrations` 记录版本；API 不运行 `AutoMigrate`。
 
-### `dto/request/auth.go`
+### `dto/request/request.go`
 
 `LoginRequest` 定义登录 JSON 和 Gin 校验；`RegisterRequest` 沿用原前端字段 `username`、`password`、`check_password`、`code`、`iAgree`。
+
+`OAuthRefreshRequest` 只接收凭证记录 `id`，用户身份由 JWT 提供。
 
 ### `dto/response/response.go`、`user.go`
 
@@ -177,20 +188,31 @@ POST /api/v1/auth/logout
 
 ### 通用 OAuth 层
 
-- `oauth_handler.go`：`OauthHandler`/`NewOauthHandler`、`Login`、`Callback`；生成随机 state 与 PKCE verifier，映射无效 state、provider 拒绝、兑换及保存错误；Handler 直接依赖统一的具体 `*OauthService`；
-- `oauth_service.go`：`OauthService`/`NewOauthService`、`StoreFlow`、`PopFlow`、`AuthCodeURL`、`Exchange`、`SaveToken` 与 `ErrInvalidOAuthState`；使用 Redis 一次性消费登录流程并根据注入的 `OIDCAuth` 生成授权地址，通过使用方定义的 `TokenExchanger` 接口调用 directory 并传递固定 provider；`SaveToken` 当前为空实现；
-- `errors.go`：定义不依赖 gRPC 的兑换业务错误；`oauth_exchange_test.go` 验证参数传递、HTTP 400/502/503/504 映射和错误信息隔离。
-- `oauth_routes.go`：注册 `GET /login` 与 `GET /callback`，实际前缀由调用方的 Gin group 决定；
-- `oauth_handler_test.go`：使用真实 Service 和 miniredis 覆盖缺失、无效、过期 state 及 Redis 故障的 HTTP 映射；
-- `oauth_service_test.go`：覆盖 provider 授权参数、S256 PKCE、state 一次性消费、Redis 故障及损坏状态数据。
+- `oauth_model.go`：`OAuthInfo` 映射 oauth_infos，包括所属用户、账号、类型、邮箱、禁用状态、可空时间和加密凭证；`OAuthListItem` 仅包含可公开的账号元数据。
+- `oauth_repository.go`：`Repository`/`NewRepository` 保存 GORM 连接；`SaveToken` 插入记录；`GetOwnedTokenForUpdate` 在 Service 传入的事务内按 ID/用户执行 FOR UPDATE；`UpdateToken` 在同一事务内更新凭证字段；`getUserOauth` 仅查询用户元数据。内部 `deleteUserOauth` 尚未暴露 HTTP 路由。
+- `oauth_handler.go`：`OauthHandler`/`NewOauthHandler`、`Login`、`Callback`、`OauthList`、`RefreshToken`；使用统一响应封装；`getUserid` 读取 JWT 用户，`randomValue` 生成安全随机值。
+- `oauth_service.go`：`OauthService` 按 provider 保存 OIDC 实例，`TokenExchanger` 定义兑换/刷新接口，`IDTokenClaims` 提取账号与邮箱。StoreFlow/PopFlow 管理一次性 state；AuthCodeURL/authFor 选择 provider；Exchange/VerifyIDToken/SaveToken 验证身份并加密持久化；RefreshToken 开启事务，编排加锁读取、refreshTokenCredentials、更新与提交；toOauthInfo 加密初始凭证。
+- `errors.go`：隔离无效状态、provider、身份、归属及上游兑换/刷新错误。
+- `oauth_routes.go`：统一注册 /oauth/login、/oauth/callback、/oauth/list 和 /oauth/refresh；除 callback 外均要求 JWT。
+- `oauth_handler_test.go`、`oauth_service_test.go`：state、PKCE、provider 参数、过期、Redis 故障和损坏状态。
+- `oauth_exchange_test.go`（`exchangeStub`）：兑换参数、错误状态映射与信息隔离。
+- `oauth_provider_test.go`、`oauth_login_json_test.go`：多 provider 选择、回调仅信任 state 中的 provider、授权 URL JSON 合同。
+- `oauth_persistence_test.go`（`tokenExchange`）：签名/claims/nonce、加密密钥、用户绑定、重复账号与持久化错误。
+- `oauth_list_test.go`：认证、用户隔离、空列表及无凭证泄露。
+- `oauth_refresh_test.go`（`refreshExchange`）：JWT/归属、凭证更新、可选字段保留、身份校验、失败回滚。
+- `oauth_refresh_postgres_test.go`：通过 `OAUTH_REFRESH_TEST_DSN` 启用真实 PostgreSQL 测试，验证跨实例行锁串行刷新；未设置时跳过。
 
 ### `oidc/oidc.go`
 
-`LoginFlow` 保存 PKCE verifier 和流程过期时间；`OIDCAuth` 聚合 discovery 后的 `oauth2.Config` 与 provider 专属授权 URL 参数；`NewOIDCAuth` 通过 issuer discovery 构造 authorization/token endpoint，并明确选择 provider 支持的认证方式，避免兑换时探测方式引起重复请求。Redis key 直接使用高熵 state，不额外保存 provider ID。
+`LoginFlow` 保存 Provider、UserID、Nonce、Verifier、ExpiresAt；`OIDCAuth` 聚合 oauth2.Config、授权参数与 IDTokenVerifier。NewOIDCAuth 执行 discovery 并选择明确的认证方式，避免重复提交授权码。回调只从已消费的 flow 选择实例。
 
 ### `openai/oai_config.go`
 
-提供 OpenAI 的 `prompt=login`、`id_token_add_organizations=true`、`codex_cli_simplified_flow=true` 授权参数。`OaiScopes` 当前返回空集合，token 持久化、完成跳转、nonce 和 ID token 验证也尚未实现，因此该模块仍是登录流程骨架。
+OaiAuthURLParams 提供 prompt、组织 ID token 与 Codex 授权参数；OaiScopes 返回 openid、profile、email、offline_access。
+
+### `internal/security`
+
+`encryption.go` 的 Encrypt/Decrypt 使用 AES-GCM、随机 nonce 与 Base64 保护凭证；`encryption_test.go` 覆盖往返解密、随机性、错误密钥和篡改拒绝。
 
 ## 10. `modules/user`
 
@@ -217,7 +239,7 @@ GET /api/v1/auth/verify
 
 ## 11. `internal/router`
 
-`routerall.go` 的 `AuthRouter`、`UserRouter` 接收具体的 `*user.Repository` 和 Casbin Enforcer，在路由包内创建 Service/Handler 并调用模块 `Register*Routes`；`OauthRouter` 接收 Redis client、`*oidc.OIDCAuth`、`oauth.TokenExchanger` 与 provider，创建统一的 OAuth Service/Handler，因此可由不同 Gin group 和 OIDC 配置复用。健康检查和 `/ping` 由 `cmd/api` 注册。`routerall_test.go` 使用内存 SQLite 的真实 GORM Repository，覆盖注册、重复用户名、注册后登录、Casbin 首页权限、refresh Cookie、rotation、logout、当前用户、健康、Request ID 和未认证拒绝。
+`routerall.go` 的 `AuthRouter`、`UserRouter` 接收具体的 `*user.Repository` 和 Casbin Enforcer，在路由包内创建 Service/Handler 并调用模块 `Register*Routes`；`OauthRouter` 接收 Redis client、OIDC 实例 map、TokenExchanger、OAuth Repository、加密密钥与 JWT manager，创建统一的 OAuth Service/Handler。健康检查和 `/ping` 由 `cmd/api` 注册。`routerall_test.go` 使用内存 SQLite 的真实 GORM Repository，覆盖注册、重复用户名、注册后登录、Casbin 首页权限、refresh Cookie、rotation、logout、当前用户、健康、Request ID 和未认证拒绝。
 
 ## 12. `internal/testdatabase`
 
@@ -225,11 +247,12 @@ GET /api/v1/auth/verify
 
 ## 13. upstream 远程适配
 
-- `proto/upstream.proto`：ExchangeCode、预留 RefreshToken 和 token 响应；使用 Timestamp 表达可选有效期。
+- `proto/upstream.proto`：ExchangeCode、RefreshToken 和包含 ID token 的 token 响应；使用 Timestamp 表达可选有效期。
 - `internal/rpc/upstream/*.pb.go`：由 protoc 生成的消息、客户端和服务端注册代码，不手工编辑。
-- `internal/directory/upstream/upstreamdirectory.go`：实现 OAuth TokenExchanger，设置 RPC deadline，转换请求/响应和错误；不重试授权码。
-- `internal/upstreamserver/server.go`：校验请求/provider，使用 PKCE VerifierOption 兑换，映射 provider 错误，注册标准 health，处理有界排空。
+- `internal/directory/upstream/upstreamdirectory.go`：实现 OAuth TokenExchanger，设置 RPC deadline，转换请求/响应和错误；不重试授权码或刷新请求。
+- `internal/upstreamserver/server.go`：校验请求/provider，使用 PKCE VerifierOption 兑换、TokenSource 刷新，映射 provider 错误，注册标准 health，处理有界排空。
 - `internal/upstreamserver/server_test.go`：真实 gRPC 编解码配合模拟 OIDC/token 服务，覆盖 PKCE、token 字段、回调链路、错误、deadline、单次兑换与停止行为。
+- `internal/directory/upstream/refresh_test.go`、`internal/upstreamserver/refresh_test.go`：刷新请求校验、真实 token endpoint 的 refresh grant、可选 token 字段、错误与无重复请求。
 - `internal/rpc/transport/tls.go`、`tls_test.go`：加载 mTLS 身份与 CA；验证合法连接、缺少客户端身份、错误服务器名及不受信任 CA。
 - `.scripts/update-grpc.ps1`：从协议源重新生成 Go 文件；具体工具版本与启动方式见 `docs/upstream.md`。
 

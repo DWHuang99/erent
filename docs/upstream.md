@@ -1,23 +1,26 @@
 # OAuth upstream 开发与部署
 
-## 当前最小流程
+## 授权与刷新流程
 
 ```text
-Browser → /oai/login → API 生成 state、PKCE 和授权地址 → OAuth provider
-Browser → /oai/callback → OauthService → TokenExchanger（directory）
+Browser → /oauth/login?provider=oai → API 生成 state、PKCE 和授权地址 → OAuth provider
+Browser → /oauth/callback → OauthService → TokenExchanger（directory）
         → UpstreamService.ExchangeCode → provider token endpoint
 ```
 
-API 负责 Redis 登录流程、授权地址、HTTP 错误映射和未来的 token 保存。directory 负责 deadline、protobuf 转换和 gRPC 错误转换；upstream 负责 provider 初始化、PKCE verifier 提交和有界的 token 兑换。连接由 API 的 applicationInstances 创建并关闭，路由装配将 directory 注入 service。
+API 负责 Redis 登录流程、授权地址、ID token 验证、HTTP 错误映射和凭证加密持久化。directory 负责 deadline、protobuf 转换和 gRPC 错误转换；upstream 负责 provider 初始化、PKCE verifier 提交和有界的 token 兑换。连接由 API 的 applicationInstances 创建并关闭，路由装配将 directory 注入 service。
 
-当前 API 与 upstream 都执行 OIDC discovery，因此两台机器都需要访问 issuer；这次只迁移 token 兑换。两端应使用一致的 OAI issuer、client ID、client secret 与 redirect URL。API 注册的 provider 固定为 oai，不从回调查询参数接收 provider。增加多 provider 前需要绑定登录 state 与 provider。
+当前 API 与 upstream 都执行 OIDC discovery，因此两台机器都需要访问 issuer；token 兑换与刷新由 upstream 执行。两端应使用一致的 OAI issuer、client ID、client secret 与 redirect URL。Service 按 provider 保存多个实例；当前启动装配 oai。Login 校验 provider 并将其与用户、nonce、verifier 一起绑定到 Redis state；Callback 仅使用已保存的 provider，不接收回调 provider。
 
-成功回调仍返回空的 HTTP 200，不返回 provider token；SaveToken 是空实现，持久化和成功跳转不在本轮范围。scopes、nonce 和 ID token 验证仍待实现。RefreshToken RPC 保留为下一阶段契约，目前返回 Unimplemented，尚无 directory 调用；它与本地 JWT refresh 接口无关。
+成功回调返回统一 JSON `{code:0,data:null,message:"oauth credentials saved"}`，不返回 provider token。SaveToken 验证 ID token 与 nonce，并加密保存到当前流程用户的 oauth_infos；scopes 包含 openid、profile、email、offline_access。
+
+`GET /oauth/list` 仅返回 JWT 用户的账号元数据。`POST /oauth/refresh` 接收 `{id}`：Service 开启事务，Repository 按用户和 ID 加行锁查询，Service 解密既有 refresh token，经 directory 的 RefreshToken RPC 调用 upstream TokenSource；加密并保存新凭证后提交事务。可选 refresh/ID token 缺失时保留原值。它与本地 JWT refresh 接口相互独立；当前没有自动刷新任务。
 
 ## 配置
 
 | 进程 | 变量 | 默认值 | 用途 |
 | --- | --- | --- | --- |
+| API | OAUTH_ENCRYPTION_KEY | 必填（启用 OAuth 时） | Base64 编码的 32 字节持久密钥，用于 AES-GCM 凭证加解密 |
 | API | UPSTREAM_GRPC_TARGET | localhost:50051 | host:port，Compose 内固定为 upstream:50051 |
 | API | UPSTREAM_GRPC_TIMEOUT | 10s | 单次 RPC 最大时长，沿用更短的调用方 deadline |
 | upstream | UPSTREAM_GRPC_ADDR | :50051 | gRPC 监听地址 |
@@ -42,9 +45,11 @@ upstream 提供标准 gRPC health 服务：空 service 检查进程是否在服�
 | RPC 或 token 请求超时 | DeadlineExceeded | 504 |
 | provider 配置错误、非法响应或其他兑换错误 | Internal | 502 |
 
-state 缺失、过期或已消费仍返回 400，Redis 故障仍返回 500。directory 不把原始 gRPC 错误内容暴露给 handler，server 不记录 provider 响应体、code、verifier 或 token。Nginx 的 /oai/ 不记录包含凭据的查询串。
+state 缺失、过期或已消费仍返回 400，Redis 故障仍返回 500。directory 不把原始 gRPC 错误内容暴露给 handler，server 不记录 provider 响应体、code、verifier 或 token。Nginx 的 /oauth/ 不记录包含凭据的查询串。
 
-授权码兑换不配置应用重试或 gRPC retry policy。OAuth 客户端根据 discovery 声明选定 client_secret_basic / client_secret_post，公开客户端使用表单参数，避免自动探测认证方式时再次提交同一授权码。回调已消费 state 后失败，需要重新开始登录。
+授权码兑换与 refresh token 刷新均不配置应用重试或 gRPC retry policy。OAuth 客户端根据 discovery 声明选定 client_secret_basic / client_secret_post，公开客户端使用表单参数，避免自动探测认证方式时再次提交同一授权码。回调已消费 state 后失败，需要重新开始登录。
+
+刷新接口同样映射上游超时和不可用错误；记录不存在或不属于当前用户返回 404，缺失/非法 ID 返回 400。刷新过程中可选的新 ID token 必须仍属于原账号。
 
 ## 本地运行
 
@@ -59,7 +64,9 @@ docker compose --env-file .env -f backend/docker-compose.yml exec upstream /grpc
 
 本地 Stack 新增 upstream 容器及 upstream-logs volume，50051 只暴露在 Compose 网络内，不映射宿主机。默认使用该网络内的明文 gRPC。API 等待 upstream 健康；upstream 的 stop_grace_period 为 15s，修改排空超时时需同步确保容器停止宽限期更长。
 
-Nginx 与 Vite 均将 /oai/ 转发到 Gateway。浏览器可访问 http://127.0.0.1:8088/oai/login；OAI_REDIRECT_URL 必须是提供方允许的真实回调地址，例如 http://127.0.0.1:8088/oai/callback。
+Nginx 与 Vite 均将 /oauth/ 转发到 Gateway。控制台通过携带 Bearer 凭证的 `GET /oauth/login?provider=oai` 获取授权链接（`Accept: application/json`）；直接在地址栏访问不携带该凭证。
+
+`OAI_REDIRECT_URL` 必须匹配所用客户端注册的回调地址，不能随意替换成网关地址。当前 Codex 本地登录配置使用 `http://localhost:1455/auth/callback`；API 与 upstream 必须使用相同的值，修改后需重新创建这两个容器。项目未监听 1455 端口：授权后如本地回调页面无法打开，将浏览器地址栏中的完整回调 URL 粘贴到 OAuth 页的手动回调入口，由前端校验本次 state 后提交到 `/oauth/callback`。不要在另一个 Codex 登录流程同时占用该端口时操作，也不要手动修改已生成授权链接中的 redirect_uri。
 
 直接运行时，先导入环境变量，在两个终端分别执行：
 

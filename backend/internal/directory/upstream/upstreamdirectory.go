@@ -2,6 +2,7 @@ package upstreamdirectory
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"erent/internal/modules/oauth"
@@ -52,5 +53,40 @@ func (d *Directory) Exchange(ctx context.Context, code, verifier, provider strin
 		}
 		token.Expiry = response.ExpiresAt.AsTime()
 	}
-	return token, nil
+	return token.WithExtra(map[string]any{"id_token": response.IdToken}), nil
+}
+
+func (d *Directory) RefreshToken(ctx context.Context, refreshtoken string, provider string) (*oauth2.Token, error) {
+	ctx, cancel := context.WithTimeout(ctx, d.timeout)
+	defer cancel()
+	response, err := d.client.RefreshToken(ctx, &upstream.RefreshTokenRequest{RefreshToken: refreshtoken, Provider: provider})
+	if err != nil {
+		switch status.Code(err) {
+		case codes.InvalidArgument:
+			return nil, oauth.ErrInvalidRefresh
+		case codes.FailedPrecondition, codes.NotFound:
+			return nil, oauth.ErrProviderUnavailable
+		case codes.Unauthenticated:
+			return nil, oauth.ErrRefreshRejected
+		case codes.Unavailable:
+			return nil, oauth.ErrUpstreamUnavailable
+		case codes.DeadlineExceeded:
+			return nil, oauth.ErrRefreshTimeout
+		case codes.Canceled:
+			return nil, context.Canceled
+		default:
+			return nil, oauth.ErrRefreshFailed
+		}
+	}
+	if response == nil || strings.TrimSpace(response.AccessToken) == "" {
+		return nil, oauth.ErrRefreshFailed
+	}
+	token := &oauth2.Token{AccessToken: response.AccessToken, RefreshToken: response.RefreshToken, TokenType: response.TokenType}
+	if response.ExpiresAt != nil {
+		if err := response.ExpiresAt.CheckValid(); err != nil {
+			return nil, oauth.ErrRefreshFailed
+		}
+		token.Expiry = response.ExpiresAt.AsTime()
+	}
+	return token.WithExtra(map[string]any{"id_token": response.IdToken}), nil
 }

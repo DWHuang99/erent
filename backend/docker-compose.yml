@@ -67,6 +67,7 @@ services:
       OAI_CLIENT_ID: ${OAI_CLIENT_ID:-}
       OAI_CLIENT_SECRET: ${OAI_CLIENT_SECRET:-}
       OAI_REDIRECT_URL: ${OAI_REDIRECT_URL:-}
+      OAUTH_ENCRYPTION_KEY: ${OAUTH_ENCRYPTION_KEY:-}
       LOG_FILE: ${LOG_FILE:-/var/log/ai-gateway/app.log}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in the root .env}
       JWT_ISSUER: ${JWT_ISSUER:-ai-gateway}

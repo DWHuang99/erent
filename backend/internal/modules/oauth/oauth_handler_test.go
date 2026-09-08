@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -35,6 +36,14 @@ func TestCallbackRejectsMissingAndInvalidState(t *testing.T) {
 		if response.Code != http.StatusBadRequest {
 			t.Fatalf("%s status = %d, body = %s", target, response.Code, response.Body.String())
 		}
+		var body map[string]any
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		data, hasData := body["data"]
+		if len(body) != 3 || body["code"] != float64(400) || body["message"] != "invalid_state" || !hasData || data != nil {
+			t.Fatalf("unexpected error envelope: %s", response.Body.String())
+		}
 	}
 }
 
@@ -56,7 +65,7 @@ func TestCallbackRejectsExpiredState(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 	service := newTestOAuthService(client)
-	if err := service.StoreFlow("state", oidc.LoginFlow{
+	if err := service.StoreFlow("state", oidc.LoginFlow{Provider: "oai",
 		Verifier:  "verifier",
 		ExpiresAt: time.Now().Add(-time.Second),
 	}, context.Background()); err != nil {

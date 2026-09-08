@@ -16,7 +16,7 @@ import (
 )
 
 func newTestOAuthService(client *redis.Client) *OauthService {
-	return NewOauthService(client, &oidc.OIDCAuth{
+	return NewOauthService(client, map[string]*oidc.OIDCAuth{"oai": {
 		OauthConfig: &oauth2.Config{
 			ClientID:    "client-id",
 			RedirectURL: "http://localhost/oauth/callback",
@@ -26,19 +26,23 @@ func newTestOAuthService(client *redis.Client) *OauthService {
 			},
 		},
 		AuthURLParams: map[string]string{"prompt": "login"},
-	}, nil, "oai")
+	}}, nil, nil, []byte("0123456789abcdef0123456789abcdef"))
 }
 
 func TestAuthCodeURLIncludesPKCEAndProviderParameters(t *testing.T) {
 	service := newTestOAuthService(nil)
 	verifier := oauth2.GenerateVerifier()
-	authURL, err := url.Parse(service.AuthCodeURL("state-value", verifier))
+	value, err := service.AuthCodeURL("oai", "state-value", verifier, "nonce-value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authURL, err := url.Parse(value)
 	if err != nil {
 		t.Fatalf("parse auth URL: %v", err)
 	}
 
 	query := authURL.Query()
-	if query.Get("state") != "state-value" || query.Get("prompt") != "login" {
+	if query.Get("state") != "state-value" || query.Get("prompt") != "login" || query.Get("nonce") != "nonce-value" {
 		t.Fatalf("unexpected auth URL query: %s", authURL.RawQuery)
 	}
 	if query.Get("code_challenge_method") != "S256" || query.Get("code_challenge") != oauth2.S256ChallengeFromVerifier(verifier) {
@@ -51,7 +55,7 @@ func TestStoreAndPopFlowConsumesStateOnce(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 	service := newTestOAuthService(client)
-	flow := oidc.LoginFlow{
+	flow := oidc.LoginFlow{Provider: "oai",
 		Verifier:  "verifier",
 		ExpiresAt: time.Now().Add(time.Minute).UTC().Truncate(time.Millisecond),
 	}

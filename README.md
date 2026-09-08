@@ -147,6 +147,14 @@ npm run dev
 bash .scripts/start.sh
 ```
 
+需要在 IDE 中调试 Go 后端时，使用 debug 模式：
+
+```bash
+bash .scripts/start.sh debug
+```
+
+debug 模式会停止容器化的 Web、Gateway、API 和 upstream，只在 Docker 中启动 PostgreSQL、Redis 和 migration，并把 Redis 发布到本机 `127.0.0.1:6379`；Vite 仍以前台进程运行。随后在 IDE 中分别以 Debug 模式启动 `backend/cmd/upstream`（默认 `127.0.0.1:50051`）和 `backend/cmd/api`（默认 `127.0.0.1:8080`），即可命中 Go 源码断点。也可使用等价参数 `--debug`。
+
 浏览器访问 `http://127.0.0.1:5173/login`。登录页可进入 `/register` 创建账号；注册成功后会返回登录页、回填新用户名并显示成功提示，但不会自动登录。登录成功后自动进入首页；未登录访问首页会返回登录页。生产构建和前端测试：
 
 ```powershell

@@ -7,23 +7,23 @@
 ```mermaid
 flowchart LR
     Browser[Browser] --> Web[Nginx + Vue 3 dist]
-    Web -->|/api and /health| Gateway[Gateway]
+    Web -->|/api, /health and /oauth| Gateway[Gateway]
     Client[API Client] --> Gateway
     Gateway --> API[Monolithic API]
-    API --> PostgreSQL[(PostgreSQL users + Casbin policy)]
+    API --> PostgreSQL[(PostgreSQL users + Casbin policy + oauth_infos)]
     API --> Redis[(Redis refresh sessions + OAuth login flows)]
     API -->|OIDC discovery| OIDC[OIDC Provider]
-    API -->|gRPC ExchangeCode| Upstream[OAuth upstream]
-    Upstream -->|OIDC discovery / token exchange| OIDC
+    API -->|gRPC ExchangeCode / RefreshToken| Upstream[OAuth upstream]
+    Upstream -->|OIDC discovery / token exchange / refresh| OIDC
     API --> Logs[(api-logs rotating JSON files)]
     Migrations[backend/migrations] --> Migrator[One-shot migrate job]
     Migrator --> PostgreSQL
     Migrator -. completed successfully .-> API
 ```
 
-`backend/docker-compose.yml` 定义名为 `ai-gateway-go-auth` 的本地 Stack，包含 API、upstream、PostgreSQL、Redis、migration、Gateway 与 Web 容器。Gateway 是无状态单上游代理，不持有身份或业务数据；`migrate` 是一次性 schema job；API 的轮转文件日志保存在 `api-logs` named volume。Web 容器等待 Gateway healthy 后启动，并把宿主机 `WEB_PORT` 绑定到容器 `8080`。Compose 显式读取仓库根 `.env`；后端构建上下文与 migration 挂载路径相对于 `backend/`，Web 构建上下文是同级 `frontend/`。后端 Dockerfile 还提供继承 `migrate/migrate` 且携带版本化 SQL 的 `migrations` 发布 target。upstream 以独立 gRPC 进程提供 token 兑换与 health 服务，50051 仅在 Compose 内部暴露；当前没有 K8s 配置、服务发现或 JWKS。API 保留可选的 OIDC Authorization Code + PKCE 登录骨架。
+`backend/docker-compose.yml` 定义名为 `ai-gateway-go-auth` 的本地 Stack，包含 API、upstream、PostgreSQL、Redis、migration、Gateway 与 Web 容器。Gateway 是无状态单上游代理，不持有身份或业务数据；`migrate` 是一次性 schema job；API 的轮转文件日志保存在 `api-logs` named volume。Web 容器等待 Gateway healthy 后启动，并把宿主机 `WEB_PORT` 绑定到容器 `8080`。Compose 显式读取仓库根 `.env`；后端构建上下文与 migration 挂载路径相对于 `backend/`，Web 构建上下文是同级 `frontend/`。后端 Dockerfile 还提供继承 `migrate/migrate` 且携带版本化 SQL 的 `migrations` 发布 target。upstream 以独立 gRPC 进程提供 token 兑换与 health 服务，50051 仅在 Compose 内部暴露；当前没有 K8s 配置或服务发现，API 不提供本地 JWT 的 JWKS；OIDC 身份验证使用提供方的签名密钥。API 支持可选的 OIDC Authorization Code + PKCE 授权和凭证管理。
 
-`frontend/` 是与 `backend/` 同级的独立 Vue 3 + Vite 单页管理界面。开发服务器把 `/api`、`/health` 与 `/oai` 代理到 `127.0.0.1:8080`；生产镜像以 Node.js stage 执行 `npm ci`/`npm run build`，再由 Nginx 在 `8080` 提供 `dist`。Nginx 对普通页面使用 `try_files` 回退到 `index.html`，对指纹化 `/assets/` 使用长期缓存，并把 `/api/`、`/health/`、`/oai/` 同源代理到 `gateway:8080`；API 代理关闭响应缓冲并放宽读取超时，为后续流式响应保留传输边界。前端通过 `frontend/src/axios/` 下的共享 Axios 模块消费后端公开 HTTP 合同，不直接访问 PostgreSQL 或 Redis。
+`frontend/` 是与 `backend/` 同级的独立 Vue 3 + Vite 单页管理界面。开发服务器把 `/api`、`/health` 与 `/oauth` 代理到 `127.0.0.1:8080`；生产镜像以 Node.js stage 执行 `npm ci`/`npm run build`，再由 Nginx 在 `8080` 提供 `dist`。Nginx 对普通页面使用 `try_files` 回退到 `index.html`，对指纹化 `/assets/` 使用长期缓存，并把 `/api/`、`/health/`、`/oauth/` 同源代理到 `gateway:8080`；API 代理关闭响应缓冲并放宽读取超时，为后续流式响应保留传输边界。前端通过 `frontend/src/axios/` 下的共享 Axios 模块消费后端公开 HTTP 合同，不直接访问 PostgreSQL 或 Redis。
 
 ## 2. 后端分层
 
@@ -38,14 +38,12 @@ backend/cmd/api
        -> middleware/casbin
        -> middleware/httpserver
   -> internal/router.OauthRouter
-       -> modules/oauth/routes -> handler -> service -> oidc
+       -> modules/oauth/routes -> handler -> service -> oidc / repository
        -> middleware/redis
        -> directory/upstream -> rpc/upstream -> upstreamserver -> external OIDC provider
 backend/cmd/upstream
   -> config / logger / provider discovery
   -> upstreamserver.Serve (gRPC + health + graceful shutdown)
-  -> database/connect
-  -> middleware/redis
 ```
 
 启动约定对齐 `vue-element-plus-admin/backend/cmd/api/main.go`：
@@ -59,8 +57,8 @@ backend/cmd/upstream
 
 - Router：总路由和模块路由装配，并在此创建 Handler；
 - Handler：JSON/Cookie/Gin Context 与 HTTP 状态；
-- Service：登录、refresh 轮换、logout、用户状态规则；
-- Repository：全部 GORM 用户表访问；
+- Service：登录、refresh 轮换、logout、用户状态规则和 OAuth 刷新事务编排；
+- Repository：用户及 OAuth 凭证的 GORM 查询和更新，OAuth 加锁查询使用 Service 传入的事务；
 - JWT Middleware：Bearer token 验证和 Context 身份；
 - Casbin Middleware：GORM policy persistence、用户角色同步和有效权限计算；
 - Redis Middleware：refresh token 建立、原子轮换和删除；
@@ -71,20 +69,24 @@ backend/cmd/upstream
 
 Auth 与 User 的分层不产生进程间网络调用，均位于同一 `cmd/api` 进程内；启用 OIDC 时，API 启动阶段会向 issuer 执行 discovery，回调阶段经 directory 和 gRPC 调用 upstream，由 upstream 请求 token endpoint；upstream 自己也在启动阶段执行 discovery。
 
-## 3. OIDC OAuth 登录骨架
+## 3. OIDC OAuth 授权、列表和凭证刷新
 
-当一组 `OAI_ISSUER`、`OAI_CLIENT_ID`、`OAI_REDIRECT_URL` 配置存在时，API 在 `OIDC_DISCOVERY_TIMEOUT` 内通过 issuer 的 `/.well-known/openid-configuration` 发现授权与 token endpoint，并注册：
+当一组 `OAI_ISSUER`、`OAI_CLIENT_ID`、`OAI_REDIRECT_URL` 配置存在时，API 在 `OIDC_DISCOVERY_TIMEOUT` 内完成 discovery，并加载持久化加密密钥。通用路由统一注册，未配置的 provider 无法发起授权：
 
 ```text
-GET /oai/login
-GET /oai/callback
+GET /oauth/login?provider=oai  # JWT
+GET /oauth/callback           # state 绑定身份，不接收 provider
+GET /oauth/list               # JWT
+POST /oauth/refresh           # JWT，JSON {id}
 ```
 
-`/oai/login` 生成 256-bit 随机 `state` 与 PKCE verifier，把流程数据以 `oidc:flow:<state>` 写入 Redis，TTL 为 5 分钟，然后携带 S256 challenge 及 OpenAI 授权参数跳转到 provider。`/oai/callback` 通过 Redis `GETDEL` 原子消费 state，区分无效 state 与 Redis 故障，校验本地过期时间后经注入的 TokenExchanger 使用同一 verifier 远程兑换 token。随机 state 是流程的唯一键，不依赖 provider ID；同一通用 Handler/Service 可以配合不同 OIDC 配置和路由组复用，但当前启动装配只注册 OAI。
+`OauthService` 按 provider 保存 OIDC 实例。Login 校验 provider 和当前用户，生成随机 state、nonce 与 PKCE verifier，将 Provider、UserID、Nonce、Verifier、ExpiresAt 以 `oidc:flow:<state>` 保存到 Redis，TTL 为 5 分钟；返回统一 JSON 中的授权 URL，由前端打开。Callback 使用 Redis `GETDEL` 一次性消费 state，仅使用流程中保存的 provider 和用户身份，通过 directory 兑换 token，验证 ID token 签名、issuer、audience、nonce 和账号声明，再加密保存凭证。当前装配 OAI，scopes 为 openid、profile、email、offline_access。
 
-directory 用有界 context 传递 code/verifier/provider，将 token 的 access token、refresh token、token type 和 expiry 映射回 oauth2.Token。server 校验参数与 provider 是否启用，并映射错误；错误合同、mTLS 配置及无重试约定见 `docs/upstream.md`。RefreshToken RPC 尚未实现。
+列表只按 JWT 用户查询账号元数据，返回 `data.oauthlist`，空列表为 `[]`，不查询或返回 token。前端 `/oauth` 提供授权及手动粘贴回调 URL 的入口，`/authorized-accounts` 展示账号并提供刷新按钮。HTTP 响应统一为 `{code,data,message}`；回调成功返回 `oauth credentials saved`。
 
-当前 `SaveToken` 仍为空实现，成功回调后的应用跳转、nonce、ID token 验证和持久化均未实现；OAI scopes 目前为空，因此这只是可校验的流程骨架，尚不能视为完整可用的 OpenAI 登录。
+手动刷新只接受记录 ID。Service 开启最多 15 秒的事务流程，Repository 在该事务内执行 `WHERE id = ? AND user_id = ? FOR UPDATE`，锁定用户自己的记录；Service 解密数据库中的 refresh token，按记录类型选择 provider，经 directory 的 RefreshToken RPC 调用 upstream 的 `oauth2.Config.TokenSource`。Service 校验可选的新 ID token 仍属于原账号，加密新凭证，再由 Repository 在同一事务更新凭证字段并提交；失败回滚。上游未返回 refresh token 或 ID token 时保留旧值，未返回到期时间时清空旧到期时间。数据库行锁使多个 API 实例串行读取同一账号的最新凭证。上游刷新和数据库提交无法组成跨系统原子事务，提交失败时上游已轮换的 token 无法回滚。
+
+directory/server 使用有界 context，传递 access token、refresh token、ID token、token type 和可选 expiry，隔离上游错误详情。错误合同、mTLS 与无重试约定见 `docs/upstream.md`。当前没有后台定时刷新任务，也不自动跳转处理本地 1455 回调。
 
 ## 4. 登录调用链
 
@@ -199,6 +201,8 @@ PostgreSQL 当前包含最小 `users` 表：
 id, username, password_hash, role_code, is_active, created_at, updated_at
 ```
 
+`000003_oauth_infos` 创建上游凭据表，`000004_oauth_owner` 增加非空 `user_id`、指向 users 的级联删除外键及 `(user_id,type,account_id)` 唯一索引。已有无归属记录会使迁移失败，必须先明确所属用户。模型保存账号、邮箱、禁用状态、类型、可空到期/刷新时间和创建/更新时间；重复绑定同一用户的同类账号会被唯一约束拒绝，当前映射为保存失败。access/refresh/ID token 使用 AES-GCM 加密后以 Base64 TEXT 保存，不参与 JSON 序列化；`OAUTH_ENCRYPTION_KEY` 是 Base64 编码的 32 字节持久密钥，需保持稳定才能解密既有记录。
+
 数据库结构只由 `backend/migrations` 管理：`000001_users` 创建用户表，`000002_casbin_rbac` 创建 `casbin_rule` 并写入三角色首页策略；migrate 工具在 `schema_migrations` 记录当前版本和 dirty 状态。生产 API 与 Casbin GORM Adapter 都关闭自动迁移，初始化管理员仍使用 `FirstOrCreate`。测试可在隔离的内存 SQLite 上使用 `AutoMigrate`，不影响生产 schema 流程。API readiness 检查 PostgreSQL `PingContext` 和 Redis `PING`；OAuth 启用时额外在 1s 内检查 upstream.UpstreamService 的 gRPC health；任一依赖不可用即返回 `503`。`cmd/healthcheck` 是 distroless 容器内的探测客户端，它请求 API `main` 暴露的 `/health/ready` 端点；两者分别承担探测方和被探测方职责。Gateway 容器使用同一客户端，经反向代理检查 API readiness。
 
 ## 9. 仓库和部署边界
@@ -211,7 +215,7 @@ repository root
 └─ docs/deployment.md
 ```
 
-Compose 文件位于 `backend/`；API/Gateway build context 是当前后端目录，Web build context 是 `../frontend`，migration job 只读挂载 `./migrations`，API/upstream 日志分别挂载 `api-logs` / `upstream-logs` named volume。根 `.env` 由命令行 `--env-file` 显式传入；后端目录不放 `.env`。默认本地容器入口为 `127.0.0.1:${WEB_PORT:-8088}`，Nginx 静态服务与代理保持浏览器请求同源；Gateway 的 `127.0.0.1:${APP_PORT:-8080}` 仍保留给 API 调试。`.scripts/update-database.sh` 使用该 Compose 文件启动 PostgreSQL 并运行既有 migrate job；`.scripts/start.sh` 使用同一入口启动整个容器 Stack，同时以前台 Vite 提供开发热更新，`Ctrl+C` 只终止 Vite，不停止容器。
+Compose 文件位于 `backend/`；API/Gateway build context 是当前后端目录，Web build context 是 `../frontend`，migration job 只读挂载 `./migrations`，API/upstream 日志分别挂载 `api-logs` / `upstream-logs` named volume。根 `.env` 由命令行 `--env-file` 显式传入；后端目录不放 `.env`。默认本地容器入口为 `127.0.0.1:${WEB_PORT:-8088}`，Nginx 静态服务与代理保持浏览器请求同源；Gateway 的 `127.0.0.1:${APP_PORT:-8080}` 仍保留给 API 调试。`.scripts/update-database.sh` 使用该 Compose 文件启动 PostgreSQL 并运行既有 migrate job；`.scripts/start.sh` 默认启动整个容器 Stack 和 Vite。其 `debug`/`--debug` 模式先停止 Web、Gateway、API、upstream 容器，再通过 `.scripts/docker-compose.debug.yml` 仅启动 PostgreSQL、Redis、migration，并将 Redis 限定发布到 `127.0.0.1:6379`，Vite 继续代理本机 `8080`，由 IDE 调试进程提供 `cmd/api` 和 `cmd/upstream`。两种模式下 `Ctrl+C` 都只终止 Vite，不停止容器。
 
 公开仓库只保存软件本身和通用运行能力：`ci.yml` 验证 Go/Vue 与全部镜像 target，`release.yml` 在 `main`、`v*` tag 或手动运行时，把 API、Gateway、Upstream、Migrations、Web 五个同版本镜像发布到 GHCR，并始终附加完整源码 SHA 标签。生产 Compose、服务器地址和 CD 位于私有 `DWHuang99/erent-deploy`；其 `workflow_dispatch` 接受不可变镜像标签，SSH 到服务器后拉取私有部署仓库和四个镜像，等待 migration 与整套服务 healthy。公开仓库没有生产 Secrets、生产 Compose 或自动触发生产部署；upstream 的新服务器环境变量、CD 和 GitHub Environment 等服务器确定后再在私有仓库接入。详细边界见 `docs/deployment.md` 和 `docs/upstream.md`。
 
@@ -219,8 +223,8 @@ Compose 文件位于 `backend/`；API/Gateway build context 是当前后端目�
 
 - 已实现：Vue 3 登录页与受保护首页、登录后跳转、access token 会话恢复、自动 refresh 重试、退出登录、响应式导航和明暗主题；Node/Nginx 多阶段生产镜像提供 SPA 回退、静态资源缓存及同源 API/readiness 代理；
 - 已实现：后端注册、登录、access JWT、Redis refresh rotation、logout、当前用户、初始化管理员、Casbin 三角色首页权限、readiness；
-- 已实现：可选 OIDC discovery、一次性 Redis state、Authorization Code + PKCE、通用 OAuth Handler/Service、OAI 路由、directory 与 upstream gRPC 兑换、mTLS、健康检查和本地容器；
-- 未实现：OAuth scopes、token 持久化、登录完成跳转、nonce 与 ID token 验证，以及除 OAI 外的 provider 启动装配；
+- 已实现：OIDC discovery、一次性 state、PKCE、nonce 与 ID token 验证、多 provider Service、凭证加密持久化、用户隔离列表与手动刷新、OAuth 授权页与已授权账号页、upstream gRPC 兑换/刷新、mTLS 与健康检查；
+- 未实现：OAuth 后台定时刷新、授权完成自动跳转，以及除 OAI 外的 provider 启动装配；
 - 未实现：真实验证码服务、改密、多设备会话管理、角色/策略管理、细粒度业务权限、审计；
 - 未实现：Provider、模型目录、Chat Completions、SSE、WebSocket；
 - 未实现：API Key、限流、用量、钱包和计费。
