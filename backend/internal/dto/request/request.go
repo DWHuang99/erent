@@ -13,3 +13,8 @@ type RegisterRequest struct {
 	Code          string `json:"code"`
 	IAgree        bool   `json:"iAgree"`
 }
+
+// OAuthRefreshRequest identifies a credential owned by the authenticated user.
+type OAuthRefreshRequest struct {
+	ID uint64 `json:"id" binding:"required"`
+}

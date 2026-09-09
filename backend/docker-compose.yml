@@ -57,9 +57,17 @@ services:
       HTTP_ADDR: ":8080"
       DATABASE_URL: postgres://${POSTGRES_USER:-ai_gateway}:${POSTGRES_PASSWORD:-ai_gateway_dev}@postgres:5432/${POSTGRES_DB:-ai_gateway}?sslmode=disable
       DATABASE_CONNECT_TIMEOUT: ${DATABASE_CONNECT_TIMEOUT:-10s}
+      OIDC_DISCOVERY_TIMEOUT: ${OIDC_DISCOVERY_TIMEOUT:-10s}
+      UPSTREAM_GRPC_TARGET: upstream:50051
+      UPSTREAM_GRPC_TIMEOUT: ${UPSTREAM_GRPC_TIMEOUT:-10s}
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REDIS_DB: ${REDIS_DB:-0}
+      OAI_ISSUER: ${OAI_ISSUER:-}
+      OAI_CLIENT_ID: ${OAI_CLIENT_ID:-}
+      OAI_CLIENT_SECRET: ${OAI_CLIENT_SECRET:-}
+      OAI_REDIRECT_URL: ${OAI_REDIRECT_URL:-}
+      OAUTH_ENCRYPTION_KEY: ${OAUTH_ENCRYPTION_KEY:-}
       LOG_FILE: ${LOG_FILE:-/var/log/ai-gateway/app.log}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in the root .env}
       JWT_ISSUER: ${JWT_ISSUER:-ai-gateway}
@@ -81,6 +89,8 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+      upstream:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "/healthcheck"]
       interval: 10s
@@ -88,6 +98,35 @@ services:
       retries: 6
       start_period: 5s
     mem_limit: 256m
+    restart: unless-stopped
+
+  upstream:
+    build:
+      context: .
+      target: upstream
+    image: ai-gateway-go-upstream:local
+    environment:
+      UPSTREAM_GRPC_ADDR: ":50051"
+      UPSTREAM_OAUTH_TIMEOUT: ${UPSTREAM_OAUTH_TIMEOUT:-8s}
+      UPSTREAM_SHUTDOWN_TIMEOUT: ${UPSTREAM_SHUTDOWN_TIMEOUT:-10s}
+      OIDC_DISCOVERY_TIMEOUT: ${OIDC_DISCOVERY_TIMEOUT:-10s}
+      OAI_ISSUER: ${OAI_ISSUER:-}
+      OAI_CLIENT_ID: ${OAI_CLIENT_ID:-}
+      OAI_CLIENT_SECRET: ${OAI_CLIENT_SECRET:-}
+      OAI_REDIRECT_URL: ${OAI_REDIRECT_URL:-}
+      LOG_FILE: /var/log/ai-gateway/upstream.log
+    expose:
+      - "50051"
+    volumes:
+      - upstream-logs:/var/log/ai-gateway
+    healthcheck:
+      test: ["CMD", "/grpc-healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+    stop_grace_period: 15s
+    mem_limit: 128m
     restart: unless-stopped
 
   gateway:
@@ -132,5 +171,6 @@ services:
 
 volumes:
   api-logs:
+  upstream-logs:
   postgres-data:
   redis-data:

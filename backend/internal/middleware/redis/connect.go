@@ -4,14 +4,16 @@ import (
 	"context"
 	"fmt"
 
+	"erent/internal/config"
+
 	"github.com/redis/go-redis/v9"
 )
 
-func Connect(ctx context.Context, address, password string, database int) (*redis.Client, error) {
+func Connect(ctx context.Context, configuration config.RedisConfig) (*redis.Client, error) {
 	client := redis.NewClient(&redis.Options{
-		Addr:     address,
-		Password: password,
-		DB:       database,
+		Addr:     configuration.Address,
+		Password: configuration.Password,
+		DB:       configuration.DB,
 	})
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()

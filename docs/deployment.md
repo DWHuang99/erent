@@ -22,11 +22,12 @@ DWHuang99/erent-deploy (private)
 ```text
 ghcr.io/dwhuang99/erent-api:<source-sha>
 ghcr.io/dwhuang99/erent-gateway:<source-sha>
+ghcr.io/dwhuang99/erent-upstream:<source-sha>
 ghcr.io/dwhuang99/erent-migrations:<source-sha>
 ghcr.io/dwhuang99/erent-web:<source-sha>
 ```
 
-四个镜像必须使用同一个源码版本。`latest` 只表示公开仓库默认分支的最新构建，生产部署和回滚都应使用不可变的完整源码 SHA 或明确的 release tag。
+本公开仓库发布五个镜像，接入 upstream 时 API 与 upstream 应使用同一个源码版本。`latest` 只表示公开仓库默认分支的最新构建，生产部署和回滚都应使用不可变的完整源码 SHA 或明确的 release tag。
 
 `erent-migrations` 继承 `migrate/migrate` CLI 并携带该源码版本的 `backend/migrations`，使数据库 schema 与 API/Gateway/Web 版本保持一致。Web 镜像包含 Vue `dist` 和 Nginx；生产服务器不需要 Go 或 Node.js 构建环境。
 
@@ -53,3 +54,7 @@ README.md
 4. 可选地为 `production` 添加 Required reviewers，并通过服务器现有 HTTPS 反向代理公开 Web。
 
 全部字段和首次部署命令见私有仓库 `README.md`。
+
+## Upstream rollout pending
+
+当前只在公开源码仓库完成 upstream 进程、可选 mTLS、本地 Compose、镜像构建与发布配置。私有仓库现有的四镜像部署流程保持原状；upstream 新服务器到位后，再配置独立的 GitHub Environment、SSH/证书、服务器变量、生产 Compose 与 CD，并授予 erent-upstream package 的读取权限。源码中不填写未知的服务器地址，也不创建生产 Environment。程序配置、探针身份和网络边界见 [upstream.md](upstream.md)。

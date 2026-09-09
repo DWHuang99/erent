@@ -4,6 +4,8 @@ package apirouter
 import (
 	jwtservice "erent/internal/middleware/jwt"
 	"erent/internal/modules/auth"
+	"erent/internal/modules/oauth"
+	"erent/internal/modules/oauth/oidc"
 	"erent/internal/modules/user"
 
 	"github.com/casbin/casbin/v3"
@@ -37,6 +39,22 @@ func UserRouter(
 	user.RegisterUserRoutes(
 		api,
 		user.NewUserHandler(user.NewService(userRepository, enforcer)),
+		jwtManager,
+	)
+}
+
+func OauthRouter(
+	api *gin.RouterGroup,
+	redisClient *redis.Client,
+	oidcAuth map[string]*oidc.OIDCAuth,
+	exchanger oauth.TokenExchanger,
+	repository *oauth.Repository,
+	jwtManager *jwtservice.JWTManager,
+	encryptionKey []byte,
+) {
+	oauth.RegisterOauthRoutes(
+		api,
+		oauth.NewOauthHandler(oauth.NewOauthService(redisClient, oidcAuth, exchanger, repository, encryptionKey)),
 		jwtManager,
 	)
 }

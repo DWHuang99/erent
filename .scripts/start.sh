@@ -6,7 +6,34 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 project_dir="$(cd -- "${script_dir}/.." && pwd)"
 frontend_dir="${project_dir}/frontend"
 compose_file="${project_dir}/backend/docker-compose.yml"
+debug_compose_file="${script_dir}/docker-compose.debug.yml"
 env_file="${project_dir}/.env"
+
+usage() {
+  echo "Usage: bash .scripts/start.sh [debug|--debug]"
+  echo "  no option  Start the complete Docker stack and the Vite dev server."
+  echo "  debug      Start only PostgreSQL, Redis, migrations, and Vite; run Go services from the IDE."
+}
+
+mode="normal"
+if [[ $# -gt 1 ]]; then
+  usage >&2
+  exit 2
+fi
+
+case "${1:-}" in
+  "") ;;
+  debug|--debug) mode="debug" ;;
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  *)
+    echo "Unknown option: $1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
 
 command -v docker >/dev/null 2>&1 || {
   echo "Docker command was not found. Please install Docker Desktop first."
@@ -48,11 +75,26 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Starting backend services..."
-docker compose --env-file "${env_file}" -f "${compose_file}" up -d --build
+compose=(docker compose --env-file "${env_file}" -f "${compose_file}")
 
-echo "Gateway started: http://127.0.0.1:8080"
-echo "Nginx frontend started (default: http://127.0.0.1:8088)"
+if [[ "${mode}" == "debug" ]]; then
+  debug_compose=("${compose[@]}" -f "${debug_compose_file}")
+
+  echo "Preparing backend infrastructure for IDE debugging..."
+  "${compose[@]}" stop web gateway api upstream
+  "${debug_compose[@]}" up -d postgres redis
+  "${debug_compose[@]}" run --rm migrate
+
+  echo "Backend infrastructure is ready: PostgreSQL 127.0.0.1:5432, Redis 127.0.0.1:6379"
+  echo "Start backend/cmd/upstream and backend/cmd/api in the IDE debugger."
+  echo "The local API should listen on 127.0.0.1:8080 and connect to upstream at 127.0.0.1:50051."
+else
+  echo "Starting backend services..."
+  "${compose[@]}" up -d --build
+
+  echo "Gateway started: http://127.0.0.1:8080"
+  echo "Nginx frontend started (default: http://127.0.0.1:8088)"
+fi
 
 if command -v curl >/dev/null 2>&1 \
   && curl --noproxy "*" --connect-timeout 2 --max-time 3 --fail --silent \

@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -20,7 +21,38 @@ const (
 	defaultJWTRefreshTTL   = 7 * 24 * time.Hour
 	defaultRedisAddress    = "localhost:6379"
 	defaultDatabaseTimeout = 10 * time.Second
+	defaultOIDCTimeout     = 10 * time.Second
 )
+
+// JWTConfig contains the settings required to issue and verify local JWTs.
+type JWTConfig struct {
+	Secret     string
+	Issuer     string
+	Audience   string
+	AccessTTL  time.Duration
+	RefreshTTL time.Duration
+}
+
+// RedisConfig contains the settings required to connect to Redis.
+type RedisConfig struct {
+	Address  string
+	Password string
+	DB       int
+}
+
+// OIDCConfig contains one provider's discovery and OAuth client settings.
+type OIDCConfig struct {
+	Provider     string
+	Issuer       string
+	ClientID     string
+	ClientSecret string
+	RedirectURL  string
+}
+
+// Enabled reports whether any configuration was provided for the provider.
+func (c OIDCConfig) Enabled() bool {
+	return c.Issuer != "" || c.ClientID != "" || c.ClientSecret != "" || c.RedirectURL != ""
+}
 
 // Config contains the runtime settings required by the current server scaffold.
 type Config struct {
@@ -28,14 +60,9 @@ type Config struct {
 	HTTPAddress            string
 	DatabaseURL            string
 	DatabaseConnectTimeout time.Duration
-	JWTSecret              string
-	JWTIssuer              string
-	JWTAudience            string
-	JWTAccessTTL           time.Duration
-	JWTRefreshTTL          time.Duration
-	RedisAddress           string
-	RedisPassword          string
-	RedisDB                int
+	OIDCDiscoveryTimeout   time.Duration
+	JWT                    JWTConfig
+	Redis                  RedisConfig
 	CookieSecure           bool
 	BootstrapUsername      string
 	BootstrapPassword      string
@@ -51,14 +78,18 @@ type lookupEnvironment func(string) (string, bool)
 
 func load(lookup lookupEnvironment) (Config, error) {
 	cfg := Config{
-		Environment:       strings.TrimSpace(valueOrDefault(lookup, "APP_ENV", defaultEnvironment)),
-		HTTPAddress:       strings.TrimSpace(valueOrDefault(lookup, "HTTP_ADDR", defaultHTTPAddress)),
-		DatabaseURL:       strings.TrimSpace(valueOrDefault(lookup, "DATABASE_URL", defaultDatabaseURL)),
-		JWTSecret:         valueOrDefault(lookup, "JWT_SECRET", ""),
-		JWTIssuer:         strings.TrimSpace(valueOrDefault(lookup, "JWT_ISSUER", defaultJWTIssuer)),
-		JWTAudience:       strings.TrimSpace(valueOrDefault(lookup, "JWT_AUDIENCE", defaultJWTAudience)),
-		RedisAddress:      strings.TrimSpace(valueOrDefault(lookup, "REDIS_ADDR", defaultRedisAddress)),
-		RedisPassword:     valueOrDefault(lookup, "REDIS_PASSWORD", ""),
+		Environment: strings.TrimSpace(valueOrDefault(lookup, "APP_ENV", defaultEnvironment)),
+		HTTPAddress: strings.TrimSpace(valueOrDefault(lookup, "HTTP_ADDR", defaultHTTPAddress)),
+		DatabaseURL: strings.TrimSpace(valueOrDefault(lookup, "DATABASE_URL", defaultDatabaseURL)),
+		JWT: JWTConfig{
+			Secret:   valueOrDefault(lookup, "JWT_SECRET", ""),
+			Issuer:   strings.TrimSpace(valueOrDefault(lookup, "JWT_ISSUER", defaultJWTIssuer)),
+			Audience: strings.TrimSpace(valueOrDefault(lookup, "JWT_AUDIENCE", defaultJWTAudience)),
+		},
+		Redis: RedisConfig{
+			Address:  strings.TrimSpace(valueOrDefault(lookup, "REDIS_ADDR", defaultRedisAddress)),
+			Password: valueOrDefault(lookup, "REDIS_PASSWORD", ""),
+		},
 		BootstrapUsername: strings.TrimSpace(valueOrDefault(lookup, "BOOTSTRAP_ADMIN_USERNAME", "")),
 		BootstrapPassword: valueOrDefault(lookup, "BOOTSTRAP_ADMIN_PASSWORD", ""),
 		BootstrapRole:     strings.TrimSpace(valueOrDefault(lookup, "BOOTSTRAP_ADMIN_ROLE", "admin")),
@@ -68,13 +99,16 @@ func load(lookup lookupEnvironment) (Config, error) {
 	if cfg.DatabaseConnectTimeout, err = positiveDuration(lookup, "DATABASE_CONNECT_TIMEOUT", defaultDatabaseTimeout); err != nil {
 		return Config{}, err
 	}
-	if cfg.JWTAccessTTL, err = positiveDuration(lookup, "JWT_ACCESS_TTL", defaultJWTAccessTTL); err != nil {
+	if cfg.OIDCDiscoveryTimeout, err = positiveDuration(lookup, "OIDC_DISCOVERY_TIMEOUT", defaultOIDCTimeout); err != nil {
 		return Config{}, err
 	}
-	if cfg.JWTRefreshTTL, err = positiveDuration(lookup, "JWT_REFRESH_TTL", defaultJWTRefreshTTL); err != nil {
+	if cfg.JWT.AccessTTL, err = positiveDuration(lookup, "JWT_ACCESS_TTL", defaultJWTAccessTTL); err != nil {
 		return Config{}, err
 	}
-	if cfg.RedisDB, err = nonNegativeInt(lookup, "REDIS_DB", 0); err != nil {
+	if cfg.JWT.RefreshTTL, err = positiveDuration(lookup, "JWT_REFRESH_TTL", defaultJWTRefreshTTL); err != nil {
+		return Config{}, err
+	}
+	if cfg.Redis.DB, err = nonNegativeInt(lookup, "REDIS_DB", 0); err != nil {
 		return Config{}, err
 	}
 	if cfg.CookieSecure, err = booleanValue(lookup, "COOKIE_SECURE", false); err != nil {
@@ -90,13 +124,13 @@ func load(lookup lookupEnvironment) (Config, error) {
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL must not be empty")
 	}
-	if cfg.RedisAddress == "" {
+	if cfg.Redis.Address == "" {
 		return Config{}, fmt.Errorf("REDIS_ADDR must not be empty")
 	}
-	if len(cfg.JWTSecret) < 32 {
+	if len(cfg.JWT.Secret) < 32 {
 		return Config{}, fmt.Errorf("JWT_SECRET must contain at least 32 characters")
 	}
-	if cfg.JWTIssuer == "" || cfg.JWTAudience == "" {
+	if cfg.JWT.Issuer == "" || cfg.JWT.Audience == "" {
 		return Config{}, fmt.Errorf("JWT_ISSUER and JWT_AUDIENCE must not be empty")
 	}
 	if (cfg.BootstrapUsername == "") != (cfg.BootstrapPassword == "") {
@@ -110,6 +144,53 @@ func load(lookup lookupEnvironment) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func LoadOIDCConfig(provider string) (OIDCConfig, error) {
+	return loadOidcConfig(provider, os.LookupEnv)
+}
+
+func loadOidcConfig(provider string, lookup lookupEnvironment) (OIDCConfig, error) {
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return OIDCConfig{}, fmt.Errorf("OIDC provider must not be empty")
+	}
+
+	prefix := strings.ToUpper(strings.ReplaceAll(provider, "-", "_"))
+	cfg := OIDCConfig{
+		Provider:     provider,
+		Issuer:       strings.TrimSpace(valueOrDefault(lookup, prefix+"_ISSUER", "")),
+		ClientID:     strings.TrimSpace(valueOrDefault(lookup, prefix+"_CLIENT_ID", "")),
+		ClientSecret: strings.TrimSpace(valueOrDefault(lookup, prefix+"_CLIENT_SECRET", "")),
+		RedirectURL:  strings.TrimSpace(valueOrDefault(lookup, prefix+"_REDIRECT_URL", "")),
+	}
+	if !cfg.Enabled() {
+		return cfg, nil
+	}
+	if cfg.Issuer == "" {
+		return OIDCConfig{}, fmt.Errorf("%s_ISSUER must not be empty when %s OIDC is configured", prefix, provider)
+	}
+	if cfg.ClientID == "" {
+		return OIDCConfig{}, fmt.Errorf("%s_CLIENT_ID must not be empty when %s OIDC is configured", prefix, provider)
+	}
+	if cfg.RedirectURL == "" {
+		return OIDCConfig{}, fmt.Errorf("%s_REDIRECT_URL must not be empty when %s OIDC is configured", prefix, provider)
+	}
+	if err := validateAbsoluteHTTPURL(prefix+"_ISSUER", cfg.Issuer); err != nil {
+		return OIDCConfig{}, err
+	}
+	if err := validateAbsoluteHTTPURL(prefix+"_REDIRECT_URL", cfg.RedirectURL); err != nil {
+		return OIDCConfig{}, err
+	}
+	return cfg, nil
+}
+
+func validateAbsoluteHTTPURL(key, value string) error {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("%s must be an absolute HTTP(S) URL", key)
+	}
+	return nil
 }
 
 func nonNegativeInt(lookup lookupEnvironment, key string, fallback int) (int, error) {
