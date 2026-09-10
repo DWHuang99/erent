@@ -21,6 +21,8 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	UpstreamService_ExchangeCode_FullMethodName = "/upstream.UpstreamService/ExchangeCode"
 	UpstreamService_RefreshToken_FullMethodName = "/upstream.UpstreamService/RefreshToken"
+	UpstreamService_GetProvider_FullMethodName  = "/upstream.UpstreamService/GetProvider"
+	UpstreamService_Verifier_FullMethodName     = "/upstream.UpstreamService/Verifier"
 )
 
 // UpstreamServiceClient is the client API for UpstreamService service.
@@ -30,6 +32,10 @@ type UpstreamServiceClient interface {
 	ExchangeCode(ctx context.Context, in *ExchangeCodeRequest, opts ...grpc.CallOption) (*TokenResponse, error)
 	// Refreshes provider credentials; callers coordinate refresh and persist the result.
 	RefreshToken(ctx context.Context, in *RefreshTokenRequest, opts ...grpc.CallOption) (*TokenResponse, error)
+	// Returns discovery metadata for a configured issuer; reject unknown issuers.
+	GetProvider(ctx context.Context, in *ProviderRequest, opts ...grpc.CallOption) (*ProviderResponse, error)
+	// Returns verified claims; verification failures use a non-OK gRPC status.
+	Verifier(ctx context.Context, in *VerifyRequest, opts ...grpc.CallOption) (*VerifyResponse, error)
 }
 
 type upstreamServiceClient struct {
@@ -60,6 +66,26 @@ func (c *upstreamServiceClient) RefreshToken(ctx context.Context, in *RefreshTok
 	return out, nil
 }
 
+func (c *upstreamServiceClient) GetProvider(ctx context.Context, in *ProviderRequest, opts ...grpc.CallOption) (*ProviderResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ProviderResponse)
+	err := c.cc.Invoke(ctx, UpstreamService_GetProvider_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *upstreamServiceClient) Verifier(ctx context.Context, in *VerifyRequest, opts ...grpc.CallOption) (*VerifyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VerifyResponse)
+	err := c.cc.Invoke(ctx, UpstreamService_Verifier_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // UpstreamServiceServer is the server API for UpstreamService service.
 // All implementations must embed UnimplementedUpstreamServiceServer
 // for forward compatibility.
@@ -67,6 +93,10 @@ type UpstreamServiceServer interface {
 	ExchangeCode(context.Context, *ExchangeCodeRequest) (*TokenResponse, error)
 	// Refreshes provider credentials; callers coordinate refresh and persist the result.
 	RefreshToken(context.Context, *RefreshTokenRequest) (*TokenResponse, error)
+	// Returns discovery metadata for a configured issuer; reject unknown issuers.
+	GetProvider(context.Context, *ProviderRequest) (*ProviderResponse, error)
+	// Returns verified claims; verification failures use a non-OK gRPC status.
+	Verifier(context.Context, *VerifyRequest) (*VerifyResponse, error)
 	mustEmbedUnimplementedUpstreamServiceServer()
 }
 
@@ -82,6 +112,12 @@ func (UnimplementedUpstreamServiceServer) ExchangeCode(context.Context, *Exchang
 }
 func (UnimplementedUpstreamServiceServer) RefreshToken(context.Context, *RefreshTokenRequest) (*TokenResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RefreshToken not implemented")
+}
+func (UnimplementedUpstreamServiceServer) GetProvider(context.Context, *ProviderRequest) (*ProviderResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetProvider not implemented")
+}
+func (UnimplementedUpstreamServiceServer) Verifier(context.Context, *VerifyRequest) (*VerifyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Verifier not implemented")
 }
 func (UnimplementedUpstreamServiceServer) mustEmbedUnimplementedUpstreamServiceServer() {}
 func (UnimplementedUpstreamServiceServer) testEmbeddedByValue()                         {}
@@ -140,6 +176,42 @@ func _UpstreamService_RefreshToken_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UpstreamService_GetProvider_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ProviderRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UpstreamServiceServer).GetProvider(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UpstreamService_GetProvider_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UpstreamServiceServer).GetProvider(ctx, req.(*ProviderRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UpstreamService_Verifier_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VerifyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UpstreamServiceServer).Verifier(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UpstreamService_Verifier_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UpstreamServiceServer).Verifier(ctx, req.(*VerifyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // UpstreamService_ServiceDesc is the grpc.ServiceDesc for UpstreamService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -154,6 +226,14 @@ var UpstreamService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RefreshToken",
 			Handler:    _UpstreamService_RefreshToken_Handler,
+		},
+		{
+			MethodName: "GetProvider",
+			Handler:    _UpstreamService_GetProvider_Handler,
+		},
+		{
+			MethodName: "Verifier",
+			Handler:    _UpstreamService_Verifier_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

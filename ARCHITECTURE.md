@@ -12,8 +12,8 @@ flowchart LR
     Gateway --> API[Monolithic API]
     API --> PostgreSQL[(PostgreSQL users + Casbin policy + oauth_infos)]
     API --> Redis[(Redis refresh sessions + OAuth login flows)]
-    API -->|OIDC discovery| OIDC[OIDC Provider]
-    API -->|gRPC ExchangeCode / RefreshToken| Upstream[OAuth upstream]
+    Upstream -->|OIDC discovery / JWKS| OIDC[OIDC Provider]
+    API -->|gRPC GetProvider / Verifier / ExchangeCode / RefreshToken| Upstream[OAuth upstream]
     Upstream -->|OIDC discovery / token exchange / refresh| OIDC
     API --> Logs[(api-logs rotating JSON files)]
     Migrations[backend/migrations] --> Migrator[One-shot migrate job]
@@ -62,16 +62,18 @@ backend/cmd/upstream
 - JWT Middleware：Bearer token 验证和 Context 身份；
 - Casbin Middleware：GORM policy persistence、用户角色同步和有效权限计算；
 - Redis Middleware：refresh token 建立、原子轮换和删除；
-- OAuth/OIDC：通用 Handler/Service 负责一次性 state、PKCE、回调和 token exchange 编排；Service 定义 TokenExchanger 接口，directory 实现远程兑换适配；provider 包负责 discovery 后的 OAuth 配置与授权 URL 参数；
+- OAuth/OIDC：通用 Handler/Service 负责一次性 state、PKCE、回调和 token exchange 编排；Service 直接注入具体 Directory，统一编排远程兑换、刷新与验签；provider 包负责 discovery 后的 OAuth 配置与授权 URL 参数；
 - DTO：HTTP 合同，与 GORM model 分离。
 
 依赖接口遵循使用方定义原则：Repository 是具体的 GORM 实现，Auth/User Service 直接依赖 `*user.Repository`；需要隔离 HTTP 层时，由 Handler 定义最小 Service 接口，例如 `CurrentUserService`。Repository 文件不声明只为测试替身服务的接口。
 
-Auth 与 User 的分层不产生进程间网络调用，均位于同一 `cmd/api` 进程内；启用 OIDC 时，API 启动阶段会向 issuer 执行 discovery，回调阶段经 directory 和 gRPC 调用 upstream，由 upstream 请求 token endpoint；upstream 自己也在启动阶段执行 discovery。
+Auth 与 User 的分层不产生进程间网络调用，均位于同一 `cmd/api` 进程内；启用 OIDC 时，API 启动阶段通过 NewRemoteOIDCAuth 调用 upstream 的 GetProvider 获取 discovery 元数据，回调阶段经 directory 和 gRPC 调用 upstream，由 upstream 请求 token endpoint；upstream 自己也在启动阶段执行 discovery。
+
+gRPC 协议另定义 GetProvider 和 Verifier：前者返回已配置 issuer 的 discovery 元数据，后者返回验签后的身份字段与 JSON claims，nonce 仍由 API 对照登录 state 校验。upstream 已实现这两个方法：GetProvider 复用启动时保存的 Provider，仅返回已配置 issuer 的元数据；Verifier 使用对应 provider 的 verifier，在请求超时内验签并返回 claims。API 的 NewRemoteOIDCAuth 和 OauthService 统一注入具体的 *upstreamdirectory.Directory；构造入口仅获取元数据，service 包内 verifyIDToken 函数直接返回 Directory 的 VerifyResponse，service 使用 json.Unmarshal 解码 ClaimsJson。Directory 统一持有 gRPC client、施加请求超时并转换错误，OIDCAuth 不保存远程调用状态；upstream 使用 NewOIDCAuth 初始化本地 Provider 和验签器。两者共用 oauth2.Config 构建逻辑，API 不再直接访问 discovery 或 JWKS。
 
 ## 3. OIDC OAuth 授权、列表和凭证刷新
 
-当一组 `OAI_ISSUER`、`OAI_CLIENT_ID`、`OAI_REDIRECT_URL` 配置存在时，API 在 `OIDC_DISCOVERY_TIMEOUT` 内完成 discovery，并加载持久化加密密钥。通用路由统一注册，未配置的 provider 无法发起授权：
+当一组 `OAI_ISSUER`、`OAI_CLIENT_ID`、`OAI_REDIRECT_URL` 配置存在时，API 在 `OIDC_DISCOVERY_TIMEOUT` 内通过 gRPC 获取 discovery 元数据，并加载持久化加密密钥。通用路由统一注册，未配置的 provider 无法发起授权：
 
 ```text
 GET /oauth/login?provider=oai  # JWT

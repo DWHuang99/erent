@@ -9,6 +9,10 @@ service UpstreamService {
    rpc ExchangeCode(ExchangeCodeRequest) returns (TokenResponse);
    // Refreshes provider credentials; callers coordinate refresh and persist the result.
    rpc RefreshToken(RefreshTokenRequest) returns (TokenResponse);
+   // Returns discovery metadata for a configured issuer; reject unknown issuers.
+   rpc GetProvider(ProviderRequest) returns (ProviderResponse);
+   // Returns verified claims; verification failures use a non-OK gRPC status.
+   rpc Verifier(VerifyRequest) returns (VerifyResponse);
 }
 
 message ExchangeCodeRequest{
@@ -29,4 +33,39 @@ message TokenResponse{
     string token_type = 3;
     google.protobuf.Timestamp expires_at = 4;
     string id_token = 5;
+}
+
+message ProviderRequest{
+    // Must match a configured issuer, not an arbitrary URL to fetch.
+    string issuer = 1;
+}
+
+message ProviderResponse{
+    string issuer = 1;
+    string authURL = 2;
+    string tokenURL = 3;
+    string deviceAuthURL = 4;
+    string userInfoURL = 5;
+    string jwksURL = 6;
+    repeated string algorithms = 7;
+    bytes rawClaims = 8;
+}
+
+message VerifyRequest{
+    string rawidtoken = 1;
+    // Configured provider key, e.g. "oai"; selects issuer and client ID checks.
+    string provider = 2;
+}
+
+// Returned only after signature, issuer, audience and expiry validation.
+// The API must still compare nonce with its stored login flow before saving.
+message VerifyResponse{
+    string issuer = 1;
+    string subject = 2;
+    repeated string audience = 3;
+    google.protobuf.Timestamp expires_at = 4;
+    google.protobuf.Timestamp issued_at = 5;
+    string nonce = 6;
+    // Verified JSON claims, including provider-specific account and email fields.
+    bytes claims_json = 7;
 }

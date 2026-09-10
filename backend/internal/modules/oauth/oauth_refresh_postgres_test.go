@@ -38,7 +38,7 @@ func TestRefreshPostgresSerializesInstances(t *testing.T) {
 	first.repository, second.repository = NewRepository(db), NewRepository(open())
 	old := seedRefreshAccount(t, first)
 	entered, release, secondEntered := make(chan struct{}), make(chan struct{}), make(chan string, 1)
-	first.exchanger = &refreshExchange{refresh: func(ctx context.Context, token, provider string) (*oauth2.Token, error) {
+	first.directory = testDirectory(first, &refreshExchange{refresh: func(ctx context.Context, token, provider string) (*oauth2.Token, error) {
 		close(entered)
 		select {
 		case <-release:
@@ -46,11 +46,11 @@ func TestRefreshPostgresSerializesInstances(t *testing.T) {
 			return nil, ctx.Err()
 		}
 		return &oauth2.Token{AccessToken: "access-one", RefreshToken: "refresh-one"}, nil
-	}}
-	second.exchanger = &refreshExchange{refresh: func(_ context.Context, token, _ string) (*oauth2.Token, error) {
+	}})
+	second.directory = testDirectory(second, &refreshExchange{refresh: func(_ context.Context, token, _ string) (*oauth2.Token, error) {
 		secondEntered <- token
 		return &oauth2.Token{AccessToken: "access-two", RefreshToken: "refresh-two"}, nil
-	}}
+	}})
 	done1, done2 := make(chan error, 1), make(chan error, 1)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()

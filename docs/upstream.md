@@ -4,13 +4,13 @@
 
 ```text
 Browser → /oauth/login?provider=oai → API 生成 state、PKCE 和授权地址 → OAuth provider
-Browser → /oauth/callback → OauthService → TokenExchanger（directory）
+Browser → /oauth/callback → OauthService → *upstreamdirectory.Directory
         → UpstreamService.ExchangeCode → provider token endpoint
 ```
 
-API 负责 Redis 登录流程、授权地址、ID token 验证、HTTP 错误映射和凭证加密持久化。directory 负责 deadline、protobuf 转换和 gRPC 错误转换；upstream 负责 provider 初始化、PKCE verifier 提交和有界的 token 兑换。连接由 API 的 applicationInstances 创建并关闭，路由装配将 directory 注入 service。
+API 负责 Redis 登录流程、授权地址、claims 解码与 nonce/账号归属检查、HTTP 错误映射和凭证加密持久化。service 包内 verifyIDToken 经具体 Directory 调用远程验签；OIDCAuth 不持有 Directory 或远程验签状态。directory 负责 deadline、protobuf 转换和 gRPC 错误转换；upstream 负责 provider 初始化、PKCE verifier 提交和有界的 token 兑换。连接由 API 的 applicationInstances 创建并关闭，路由装配将 directory 注入 service。
 
-当前 API 与 upstream 都执行 OIDC discovery，因此两台机器都需要访问 issuer；token 兑换与刷新由 upstream 执行。两端应使用一致的 OAI issuer、client ID、client secret 与 redirect URL。Service 按 provider 保存多个实例；当前启动装配 oai。Login 校验 provider 并将其与用户、nonce、verifier 一起绑定到 Redis state；Callback 仅使用已保存的 provider，不接收回调 provider。
+API 通过 GetProvider 获取元数据、通过 Verifier 验证 ID token；只有 upstream 执行 OIDC discovery 和 JWKS 获取，token 兑换与刷新也由 upstream 执行。API 无需直连 issuer，但初始化时必须能连接已就绪的 upstream。两端应使用一致的 OAI issuer、client ID、client secret 与 redirect URL。Service 按 provider 保存多个实例；当前启动装配 oai。Login 校验 provider 并将其与用户、nonce、verifier 一起绑定到 Redis state；Callback 仅使用已保存的 provider，不接收回调 provider。
 
 成功回调返回统一 JSON `{code:0,data:null,message:"oauth credentials saved"}`，不返回 provider token。SaveToken 验证 ID token 与 nonce，并加密保存到当前流程用户的 oauth_infos；scopes 包含 openid、profile、email、offline_access。
 

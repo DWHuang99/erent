@@ -54,6 +54,7 @@ func persistenceService(t *testing.T) (*OauthService, *gorm.DB, *rsa.PrivateKey)
 	service := newTestOAuthService(nil)
 	service.repository = NewRepository(db)
 	service.oidcAuth["oai"].Verifier = oidcgo.NewVerifier("https://issuer.example", &oidcgo.StaticKeySet{PublicKeys: []crypto.PublicKey{&key.PublicKey}}, &oidcgo.Config{ClientID: "client-id"})
+	service.directory = testDirectory(service, nil)
 	return service, db, key
 }
 
@@ -220,7 +221,7 @@ func TestLoginCallbackBindsAuthenticatedUserAndConsumesState(t *testing.T) {
 	if query.Get("nonce") == "" || query.Get("state") == "" || query.Get("code_challenge") == "" {
 		t.Fatal("login correlation fields missing")
 	}
-	service.exchanger = &tokenExchange{token: signedToken(t, key, jwt.MapClaims{"nonce": query.Get("nonce"), "user_id": 2})}
+	service.directory = testDirectory(service, &tokenExchange{token: signedToken(t, key, jwt.MapClaims{"nonce": query.Get("nonce"), "user_id": 2})})
 	callback := "/oauth/callback?state=" + query.Get("state") + "&code=code&user_id=2"
 	response := request(callback, "")
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "oauth credentials saved") || strings.Contains(response.Body.String(), "secret") {
@@ -259,7 +260,7 @@ func TestCallbackReportsPersistenceAndIdentityFailures(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			service.exchanger = &tokenExchange{token: tc.token}
+			service.directory = testDirectory(service, &tokenExchange{token: tc.token})
 			if err := service.StoreFlow("state", oidc.LoginFlow{Provider: "oai", UserID: tc.owner, Nonce: "nonce", Verifier: "verifier", ExpiresAt: time.Now().Add(time.Minute)}, t.Context()); err != nil {
 				t.Fatal(err)
 			}

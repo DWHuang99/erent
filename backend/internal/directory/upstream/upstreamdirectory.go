@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"erent/internal/modules/oauth"
 	"erent/internal/rpc/upstream"
 
 	"golang.org/x/oauth2"
@@ -21,6 +20,46 @@ type Directory struct {
 func New(client upstream.UpstreamServiceClient, timeout time.Duration) *Directory {
 	return &Directory{client: client, timeout: timeout}
 }
+
+func (d *Directory) GetProvider(ctx context.Context, issuer string) (*upstream.ProviderResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, d.timeout)
+	defer cancel()
+	response, err := d.client.GetProvider(ctx, &upstream.ProviderRequest{Issuer: issuer})
+	if err != nil {
+		return nil, providerError(err)
+	}
+	if response == nil {
+		return nil, ErrProviderUnavailable
+	}
+	return response, nil
+}
+
+func (d *Directory) Verifier(ctx context.Context, rawIDToken, provider string) (*upstream.VerifyResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, d.timeout)
+	defer cancel()
+	response, err := d.client.Verifier(ctx, &upstream.VerifyRequest{Rawidtoken: rawIDToken, Provider: provider})
+	if err != nil {
+		return nil, providerError(err)
+	}
+	if response == nil {
+		return nil, ErrInvalidIDToken
+	}
+	return response, nil
+}
+
+func providerError(err error) error {
+	switch status.Code(err) {
+	case codes.FailedPrecondition, codes.NotFound:
+		return ErrProviderUnavailable
+	case codes.InvalidArgument, codes.Unauthenticated:
+		return ErrInvalidIDToken
+	case codes.Canceled:
+		return context.Canceled
+	default:
+		return ErrUpstreamUnavailable
+	}
+}
+
 func (d *Directory) Exchange(ctx context.Context, code, verifier, provider string) (*oauth2.Token, error) {
 	ctx, cancel := context.WithTimeout(ctx, d.timeout)
 	defer cancel()
@@ -28,28 +67,28 @@ func (d *Directory) Exchange(ctx context.Context, code, verifier, provider strin
 	if err != nil {
 		switch status.Code(err) {
 		case codes.InvalidArgument:
-			return nil, oauth.ErrInvalidExchange
+			return nil, ErrInvalidExchange
 		case codes.FailedPrecondition, codes.NotFound:
-			return nil, oauth.ErrProviderUnavailable
+			return nil, ErrProviderUnavailable
 		case codes.Unauthenticated:
-			return nil, oauth.ErrExchangeRejected
+			return nil, ErrExchangeRejected
 		case codes.Unavailable:
-			return nil, oauth.ErrUpstreamUnavailable
+			return nil, ErrUpstreamUnavailable
 		case codes.DeadlineExceeded:
-			return nil, oauth.ErrExchangeTimeout
+			return nil, ErrExchangeTimeout
 		case codes.Canceled:
 			return nil, context.Canceled
 		default:
-			return nil, oauth.ErrExchangeFailed
+			return nil, ErrExchangeFailed
 		}
 	}
 	if response == nil || response.AccessToken == "" {
-		return nil, oauth.ErrExchangeFailed
+		return nil, ErrExchangeFailed
 	}
 	token := &oauth2.Token{AccessToken: response.AccessToken, RefreshToken: response.RefreshToken, TokenType: response.TokenType}
 	if response.ExpiresAt != nil {
 		if err := response.ExpiresAt.CheckValid(); err != nil {
-			return nil, oauth.ErrExchangeFailed
+			return nil, ErrExchangeFailed
 		}
 		token.Expiry = response.ExpiresAt.AsTime()
 	}
@@ -63,28 +102,28 @@ func (d *Directory) RefreshToken(ctx context.Context, refreshtoken string, provi
 	if err != nil {
 		switch status.Code(err) {
 		case codes.InvalidArgument:
-			return nil, oauth.ErrInvalidRefresh
+			return nil, ErrInvalidRefresh
 		case codes.FailedPrecondition, codes.NotFound:
-			return nil, oauth.ErrProviderUnavailable
+			return nil, ErrProviderUnavailable
 		case codes.Unauthenticated:
-			return nil, oauth.ErrRefreshRejected
+			return nil, ErrRefreshRejected
 		case codes.Unavailable:
-			return nil, oauth.ErrUpstreamUnavailable
+			return nil, ErrUpstreamUnavailable
 		case codes.DeadlineExceeded:
-			return nil, oauth.ErrRefreshTimeout
+			return nil, ErrRefreshTimeout
 		case codes.Canceled:
 			return nil, context.Canceled
 		default:
-			return nil, oauth.ErrRefreshFailed
+			return nil, ErrRefreshFailed
 		}
 	}
 	if response == nil || strings.TrimSpace(response.AccessToken) == "" {
-		return nil, oauth.ErrRefreshFailed
+		return nil, ErrRefreshFailed
 	}
 	token := &oauth2.Token{AccessToken: response.AccessToken, RefreshToken: response.RefreshToken, TokenType: response.TokenType}
 	if response.ExpiresAt != nil {
 		if err := response.ExpiresAt.CheckValid(); err != nil {
-			return nil, oauth.ErrRefreshFailed
+			return nil, ErrRefreshFailed
 		}
 		token.Expiry = response.ExpiresAt.AsTime()
 	}

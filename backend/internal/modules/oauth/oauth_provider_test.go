@@ -60,7 +60,7 @@ func TestCallbackUsesOnlyStoredProvider(t *testing.T) {
 	service.oidcAuth["second"] = service.oidcAuth["oai"]
 	for _, provider := range []string{"second", "", "removed"} {
 		stub := &exchangeStub{err: ErrExchangeRejected}
-		service.exchanger = stub
+		service.directory = testDirectory(service, stub)
 		flow := oidc.LoginFlow{Provider: provider, UserID: 1, Nonce: "nonce", Verifier: "verifier", ExpiresAt: time.Now().Add(time.Minute)}
 		if err := service.StoreFlow("state", flow, t.Context()); err != nil {
 			t.Fatal(err)

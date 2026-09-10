@@ -49,7 +49,7 @@ func TestRefreshPersistsNewTokensAndPreservesAccount(t *testing.T) {
 	fresh.AccessToken = "new-access"
 	fresh.RefreshToken = "new-refresh"
 	calls := 0
-	service.exchanger = &refreshExchange{refresh: func(ctx context.Context, token, provider string) (*oauth2.Token, error) {
+	service.directory = testDirectory(service, &refreshExchange{refresh: func(ctx context.Context, token, provider string) (*oauth2.Token, error) {
 		calls++
 		if token != "old-refresh" || provider != "oai" {
 			t.Fatal("incorrect stored refresh input")
@@ -58,7 +58,7 @@ func TestRefreshPersistsNewTokensAndPreservesAccount(t *testing.T) {
 			t.Fatal("refresh lacks deadline")
 		}
 		return fresh, nil
-	}}
+	}})
 	if err := service.RefreshToken(t.Context(), 1, old.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -76,12 +76,12 @@ func TestRefreshPersistsNewTokensAndPreservesAccount(t *testing.T) {
 		t.Fatal("account metadata or expiry corrupted")
 	}
 	// The next call reads the newly persisted token, preserving omitted optional credentials.
-	service.exchanger = &refreshExchange{refresh: func(_ context.Context, token, _ string) (*oauth2.Token, error) {
+	service.directory = testDirectory(service, &refreshExchange{refresh: func(_ context.Context, token, _ string) (*oauth2.Token, error) {
 		if token != "new-refresh" {
 			t.Fatal("did not reread latest refresh token")
 		}
 		return &oauth2.Token{AccessToken: "another-access"}, nil
-	}}
+	}})
 	if err := service.RefreshToken(t.Context(), 1, old.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -99,13 +99,13 @@ func TestRefreshHTTPUsesJWTAndReportsErrors(t *testing.T) {
 	old := seedRefreshAccount(t, service)
 	calls := 0
 	var upstreamErr error
-	service.exchanger = &refreshExchange{refresh: func(_ context.Context, token, provider string) (*oauth2.Token, error) {
+	service.directory = testDirectory(service, &refreshExchange{refresh: func(_ context.Context, token, provider string) (*oauth2.Token, error) {
 		calls++
 		if token != "old-refresh" || provider != "oai" {
 			t.Fatal("request overrode stored credentials")
 		}
 		return &oauth2.Token{AccessToken: "fresh-access"}, upstreamErr
-	}}
+	}})
 	manager := jwtservice.NewJWTManager(config.JWTConfig{Secret: "test-secret", Issuer: "test", Audience: "test", AccessTTL: time.Hour})
 	router := gin.New()
 	RegisterOauthRoutes(router.Group("/oauth"), NewOauthHandler(service), manager)
@@ -143,7 +143,7 @@ func TestRefreshHTTPUsesJWTAndReportsErrors(t *testing.T) {
 		err  error
 		want int
 	}{
-		{ErrRefreshRejected, 400}, {ErrUpstreamUnavailable, 503}, {ErrRefreshTimeout, 504}, {ErrRefreshFailed, 502}, {errors.New("secret-database-error"), 500},
+		{ErrRefreshRejected, 400}, {ErrUpstreamUnavailable, 503}, {ErrRefreshTimeout, 504}, {ErrRefreshFailed, 502}, {errors.New("secret-provider-error"), 502},
 	} {
 		upstreamErr = tc.err
 		w := request(1, string(body))
@@ -169,15 +169,15 @@ func TestRefreshRejectsBadIdentityAndMissingCredentials(t *testing.T) {
 	service, db, key := persistenceService(t)
 	old := seedRefreshAccount(t, service)
 	for _, token := range []*oauth2.Token{nil, {}, {AccessToken: "expired", Expiry: time.Now().Add(-time.Minute)}, signedToken(t, key, jwt.MapClaims{"https://api.openai.com/auth": map[string]any{"chatgpt_account_id": "other-account"}})} {
-		service.exchanger = &refreshExchange{refresh: func(context.Context, string, string) (*oauth2.Token, error) { return token, nil }}
+		service.directory = testDirectory(service, &refreshExchange{refresh: func(context.Context, string, string) (*oauth2.Token, error) { return token, nil }})
 		if err := service.RefreshToken(t.Context(), 1, old.ID); err == nil {
 			t.Fatal("invalid refresh response accepted")
 		}
 	}
-	service.exchanger = &refreshExchange{refresh: func(context.Context, string, string) (*oauth2.Token, error) {
+	service.directory = testDirectory(service, &refreshExchange{refresh: func(context.Context, string, string) (*oauth2.Token, error) {
 		t.Fatal("corrupt credentials reached upstream")
 		return nil, nil
-	}}
+	}})
 	if err := db.Model(&OAuthInfo{}).Where("id = ?", old.ID).Update("refresh_token", "invalid ciphertext").Error; err != nil {
 		t.Fatal(err)
 	}
@@ -199,9 +199,9 @@ func TestRefreshRejectsBadIdentityAndMissingCredentials(t *testing.T) {
 func TestRefreshTransactionRollsBackWhenUpdateFails(t *testing.T) {
 	service, db, _ := persistenceService(t)
 	old := seedRefreshAccount(t, service)
-	service.exchanger = &refreshExchange{refresh: func(context.Context, string, string) (*oauth2.Token, error) {
+	service.directory = testDirectory(service, &refreshExchange{refresh: func(context.Context, string, string) (*oauth2.Token, error) {
 		return nil, ErrRefreshFailed
-	}}
+	}})
 	err := service.RefreshToken(t.Context(), 1, old.ID)
 	if !errors.Is(err, ErrRefreshFailed) {
 		t.Fatal(err)
@@ -216,9 +216,9 @@ func TestRefreshTransactionRollsBackWhenUpdateFails(t *testing.T) {
 	if err := db.Exec("CREATE TRIGGER reject_token_update BEFORE UPDATE ON oauth_infos BEGIN SELECT RAISE(ABORT, 'update rejected'); END").Error; err != nil {
 		t.Fatal(err)
 	}
-	service.exchanger = &refreshExchange{refresh: func(context.Context, string, string) (*oauth2.Token, error) {
+	service.directory = testDirectory(service, &refreshExchange{refresh: func(context.Context, string, string) (*oauth2.Token, error) {
 		return &oauth2.Token{AccessToken: "new-value", RefreshToken: "new-refresh"}, nil
-	}}
+	}})
 	err = service.RefreshToken(t.Context(), 1, old.ID)
 	if err == nil {
 		t.Fatal("database update failure reported success")
