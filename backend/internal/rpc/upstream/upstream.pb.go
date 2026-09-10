@@ -211,6 +211,299 @@ func (x *TokenResponse) GetIdToken() string {
 	return ""
 }
 
+type ProviderRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Must match a configured issuer, not an arbitrary URL to fetch.
+	Issuer        string `protobuf:"bytes,1,opt,name=issuer,proto3" json:"issuer,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProviderRequest) Reset() {
+	*x = ProviderRequest{}
+	mi := &file_proto_upstream_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProviderRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProviderRequest) ProtoMessage() {}
+
+func (x *ProviderRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_upstream_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProviderRequest.ProtoReflect.Descriptor instead.
+func (*ProviderRequest) Descriptor() ([]byte, []int) {
+	return file_proto_upstream_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ProviderRequest) GetIssuer() string {
+	if x != nil {
+		return x.Issuer
+	}
+	return ""
+}
+
+type ProviderResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Issuer        string                 `protobuf:"bytes,1,opt,name=issuer,proto3" json:"issuer,omitempty"`
+	AuthURL       string                 `protobuf:"bytes,2,opt,name=authURL,proto3" json:"authURL,omitempty"`
+	TokenURL      string                 `protobuf:"bytes,3,opt,name=tokenURL,proto3" json:"tokenURL,omitempty"`
+	DeviceAuthURL string                 `protobuf:"bytes,4,opt,name=deviceAuthURL,proto3" json:"deviceAuthURL,omitempty"`
+	UserInfoURL   string                 `protobuf:"bytes,5,opt,name=userInfoURL,proto3" json:"userInfoURL,omitempty"`
+	JwksURL       string                 `protobuf:"bytes,6,opt,name=jwksURL,proto3" json:"jwksURL,omitempty"`
+	Algorithms    []string               `protobuf:"bytes,7,rep,name=algorithms,proto3" json:"algorithms,omitempty"`
+	RawClaims     []byte                 `protobuf:"bytes,8,opt,name=rawClaims,proto3" json:"rawClaims,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProviderResponse) Reset() {
+	*x = ProviderResponse{}
+	mi := &file_proto_upstream_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProviderResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProviderResponse) ProtoMessage() {}
+
+func (x *ProviderResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_upstream_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProviderResponse.ProtoReflect.Descriptor instead.
+func (*ProviderResponse) Descriptor() ([]byte, []int) {
+	return file_proto_upstream_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ProviderResponse) GetIssuer() string {
+	if x != nil {
+		return x.Issuer
+	}
+	return ""
+}
+
+func (x *ProviderResponse) GetAuthURL() string {
+	if x != nil {
+		return x.AuthURL
+	}
+	return ""
+}
+
+func (x *ProviderResponse) GetTokenURL() string {
+	if x != nil {
+		return x.TokenURL
+	}
+	return ""
+}
+
+func (x *ProviderResponse) GetDeviceAuthURL() string {
+	if x != nil {
+		return x.DeviceAuthURL
+	}
+	return ""
+}
+
+func (x *ProviderResponse) GetUserInfoURL() string {
+	if x != nil {
+		return x.UserInfoURL
+	}
+	return ""
+}
+
+func (x *ProviderResponse) GetJwksURL() string {
+	if x != nil {
+		return x.JwksURL
+	}
+	return ""
+}
+
+func (x *ProviderResponse) GetAlgorithms() []string {
+	if x != nil {
+		return x.Algorithms
+	}
+	return nil
+}
+
+func (x *ProviderResponse) GetRawClaims() []byte {
+	if x != nil {
+		return x.RawClaims
+	}
+	return nil
+}
+
+type VerifyRequest struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Rawidtoken string                 `protobuf:"bytes,1,opt,name=rawidtoken,proto3" json:"rawidtoken,omitempty"`
+	// Configured provider key, e.g. "oai"; selects issuer and client ID checks.
+	Provider      string `protobuf:"bytes,2,opt,name=provider,proto3" json:"provider,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerifyRequest) Reset() {
+	*x = VerifyRequest{}
+	mi := &file_proto_upstream_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifyRequest) ProtoMessage() {}
+
+func (x *VerifyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_upstream_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifyRequest.ProtoReflect.Descriptor instead.
+func (*VerifyRequest) Descriptor() ([]byte, []int) {
+	return file_proto_upstream_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *VerifyRequest) GetRawidtoken() string {
+	if x != nil {
+		return x.Rawidtoken
+	}
+	return ""
+}
+
+func (x *VerifyRequest) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+// Returned only after signature, issuer, audience and expiry validation.
+// The API must still compare nonce with its stored login flow before saving.
+type VerifyResponse struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Issuer    string                 `protobuf:"bytes,1,opt,name=issuer,proto3" json:"issuer,omitempty"`
+	Subject   string                 `protobuf:"bytes,2,opt,name=subject,proto3" json:"subject,omitempty"`
+	Audience  []string               `protobuf:"bytes,3,rep,name=audience,proto3" json:"audience,omitempty"`
+	ExpiresAt *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	IssuedAt  *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=issued_at,json=issuedAt,proto3" json:"issued_at,omitempty"`
+	Nonce     string                 `protobuf:"bytes,6,opt,name=nonce,proto3" json:"nonce,omitempty"`
+	// Verified JSON claims, including provider-specific account and email fields.
+	ClaimsJson    []byte `protobuf:"bytes,7,opt,name=claims_json,json=claimsJson,proto3" json:"claims_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerifyResponse) Reset() {
+	*x = VerifyResponse{}
+	mi := &file_proto_upstream_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifyResponse) ProtoMessage() {}
+
+func (x *VerifyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_upstream_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifyResponse.ProtoReflect.Descriptor instead.
+func (*VerifyResponse) Descriptor() ([]byte, []int) {
+	return file_proto_upstream_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *VerifyResponse) GetIssuer() string {
+	if x != nil {
+		return x.Issuer
+	}
+	return ""
+}
+
+func (x *VerifyResponse) GetSubject() string {
+	if x != nil {
+		return x.Subject
+	}
+	return ""
+}
+
+func (x *VerifyResponse) GetAudience() []string {
+	if x != nil {
+		return x.Audience
+	}
+	return nil
+}
+
+func (x *VerifyResponse) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
+func (x *VerifyResponse) GetIssuedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.IssuedAt
+	}
+	return nil
+}
+
+func (x *VerifyResponse) GetNonce() string {
+	if x != nil {
+		return x.Nonce
+	}
+	return ""
+}
+
+func (x *VerifyResponse) GetClaimsJson() []byte {
+	if x != nil {
+		return x.ClaimsJson
+	}
+	return nil
+}
+
 var File_proto_upstream_proto protoreflect.FileDescriptor
 
 const file_proto_upstream_proto_rawDesc = "" +
@@ -230,10 +523,40 @@ const file_proto_upstream_proto_rawDesc = "" +
 	"token_type\x18\x03 \x01(\tR\ttokenType\x129\n" +
 	"\n" +
 	"expires_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12\x19\n" +
-	"\bid_token\x18\x05 \x01(\tR\aidToken2\xa1\x01\n" +
+	"\bid_token\x18\x05 \x01(\tR\aidToken\")\n" +
+	"\x0fProviderRequest\x12\x16\n" +
+	"\x06issuer\x18\x01 \x01(\tR\x06issuer\"\x80\x02\n" +
+	"\x10ProviderResponse\x12\x16\n" +
+	"\x06issuer\x18\x01 \x01(\tR\x06issuer\x12\x18\n" +
+	"\aauthURL\x18\x02 \x01(\tR\aauthURL\x12\x1a\n" +
+	"\btokenURL\x18\x03 \x01(\tR\btokenURL\x12$\n" +
+	"\rdeviceAuthURL\x18\x04 \x01(\tR\rdeviceAuthURL\x12 \n" +
+	"\vuserInfoURL\x18\x05 \x01(\tR\vuserInfoURL\x12\x18\n" +
+	"\ajwksURL\x18\x06 \x01(\tR\ajwksURL\x12\x1e\n" +
+	"\n" +
+	"algorithms\x18\a \x03(\tR\n" +
+	"algorithms\x12\x1c\n" +
+	"\trawClaims\x18\b \x01(\fR\trawClaims\"K\n" +
+	"\rVerifyRequest\x12\x1e\n" +
+	"\n" +
+	"rawidtoken\x18\x01 \x01(\tR\n" +
+	"rawidtoken\x12\x1a\n" +
+	"\bprovider\x18\x02 \x01(\tR\bprovider\"\x89\x02\n" +
+	"\x0eVerifyResponse\x12\x16\n" +
+	"\x06issuer\x18\x01 \x01(\tR\x06issuer\x12\x18\n" +
+	"\asubject\x18\x02 \x01(\tR\asubject\x12\x1a\n" +
+	"\baudience\x18\x03 \x03(\tR\baudience\x129\n" +
+	"\n" +
+	"expires_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x127\n" +
+	"\tissued_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt\x12\x14\n" +
+	"\x05nonce\x18\x06 \x01(\tR\x05nonce\x12\x1f\n" +
+	"\vclaims_json\x18\a \x01(\fR\n" +
+	"claimsJson2\xa6\x02\n" +
 	"\x0fUpstreamService\x12F\n" +
 	"\fExchangeCode\x12\x1d.upstream.ExchangeCodeRequest\x1a\x17.upstream.TokenResponse\x12F\n" +
-	"\fRefreshToken\x12\x1d.upstream.RefreshTokenRequest\x1a\x17.upstream.TokenResponseB\x1dZ\x1berent/internal/rpc/upstreamb\x06proto3"
+	"\fRefreshToken\x12\x1d.upstream.RefreshTokenRequest\x1a\x17.upstream.TokenResponse\x12D\n" +
+	"\vGetProvider\x12\x19.upstream.ProviderRequest\x1a\x1a.upstream.ProviderResponse\x12=\n" +
+	"\bVerifier\x12\x17.upstream.VerifyRequest\x1a\x18.upstream.VerifyResponseB\x1dZ\x1berent/internal/rpc/upstreamb\x06proto3"
 
 var (
 	file_proto_upstream_proto_rawDescOnce sync.Once
@@ -247,24 +570,34 @@ func file_proto_upstream_proto_rawDescGZIP() []byte {
 	return file_proto_upstream_proto_rawDescData
 }
 
-var file_proto_upstream_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_proto_upstream_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_proto_upstream_proto_goTypes = []any{
 	(*ExchangeCodeRequest)(nil),   // 0: upstream.ExchangeCodeRequest
 	(*RefreshTokenRequest)(nil),   // 1: upstream.RefreshTokenRequest
 	(*TokenResponse)(nil),         // 2: upstream.TokenResponse
-	(*timestamppb.Timestamp)(nil), // 3: google.protobuf.Timestamp
+	(*ProviderRequest)(nil),       // 3: upstream.ProviderRequest
+	(*ProviderResponse)(nil),      // 4: upstream.ProviderResponse
+	(*VerifyRequest)(nil),         // 5: upstream.VerifyRequest
+	(*VerifyResponse)(nil),        // 6: upstream.VerifyResponse
+	(*timestamppb.Timestamp)(nil), // 7: google.protobuf.Timestamp
 }
 var file_proto_upstream_proto_depIdxs = []int32{
-	3, // 0: upstream.TokenResponse.expires_at:type_name -> google.protobuf.Timestamp
-	0, // 1: upstream.UpstreamService.ExchangeCode:input_type -> upstream.ExchangeCodeRequest
-	1, // 2: upstream.UpstreamService.RefreshToken:input_type -> upstream.RefreshTokenRequest
-	2, // 3: upstream.UpstreamService.ExchangeCode:output_type -> upstream.TokenResponse
-	2, // 4: upstream.UpstreamService.RefreshToken:output_type -> upstream.TokenResponse
-	3, // [3:5] is the sub-list for method output_type
-	1, // [1:3] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	7, // 0: upstream.TokenResponse.expires_at:type_name -> google.protobuf.Timestamp
+	7, // 1: upstream.VerifyResponse.expires_at:type_name -> google.protobuf.Timestamp
+	7, // 2: upstream.VerifyResponse.issued_at:type_name -> google.protobuf.Timestamp
+	0, // 3: upstream.UpstreamService.ExchangeCode:input_type -> upstream.ExchangeCodeRequest
+	1, // 4: upstream.UpstreamService.RefreshToken:input_type -> upstream.RefreshTokenRequest
+	3, // 5: upstream.UpstreamService.GetProvider:input_type -> upstream.ProviderRequest
+	5, // 6: upstream.UpstreamService.Verifier:input_type -> upstream.VerifyRequest
+	2, // 7: upstream.UpstreamService.ExchangeCode:output_type -> upstream.TokenResponse
+	2, // 8: upstream.UpstreamService.RefreshToken:output_type -> upstream.TokenResponse
+	4, // 9: upstream.UpstreamService.GetProvider:output_type -> upstream.ProviderResponse
+	6, // 10: upstream.UpstreamService.Verifier:output_type -> upstream.VerifyResponse
+	7, // [7:11] is the sub-list for method output_type
+	3, // [3:7] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_proto_upstream_proto_init() }
@@ -278,7 +611,7 @@ func file_proto_upstream_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_upstream_proto_rawDesc), len(file_proto_upstream_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

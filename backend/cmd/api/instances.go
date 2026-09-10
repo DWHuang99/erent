@@ -100,9 +100,10 @@ func newApplicationInstances(configuration apiConfiguration) (_ *applicationInst
 			context.Background(),
 			configuration.runtime.OIDCDiscoveryTimeout,
 		)
-		instances.oidcAuth["oai"], err = oidc.NewOIDCAuth(
+		instances.oidcAuth["oai"], err = oidc.NewRemoteOIDCAuth(
 			oidcContext,
 			configuration.oai,
+			instances.upstreamDirectory,
 			openai.OaiAuthURLParams(),
 			openai.OaiScopes(),
 		)

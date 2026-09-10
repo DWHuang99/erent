@@ -2,6 +2,7 @@ package oidc
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -20,6 +21,7 @@ type LoginFlow struct {
 }
 
 type OIDCAuth struct {
+	Provider      *oidc.Provider
 	OauthConfig   *oauth2.Config
 	AuthURLParams map[string]string
 	Verifier      *oidc.IDTokenVerifier
@@ -38,15 +40,34 @@ func NewOIDCAuth(
 		return nil, err
 	}
 
+	var rawClaims json.RawMessage
+	if err := provider.Claims(&rawClaims); err != nil {
+		return nil, err
+	}
+	oauthConfig, err := buildOAuthConfig(OauthConfig, provider.Endpoint(), rawClaims, scopes)
+	if err != nil {
+		return nil, err
+	}
+
+	return &OIDCAuth{
+		Provider:      provider,
+		OauthConfig:   oauthConfig,
+		AuthURLParams: authURLParams,
+		Verifier: provider.Verifier(&oidc.Config{
+			ClientID: OauthConfig.ClientID,
+		}),
+	}, nil
+}
+
+func buildOAuthConfig(OauthConfig config.OIDCConfig, endpoint oauth2.Endpoint, rawClaims []byte, scopes []string) (*oauth2.Config, error) {
 	// Select an advertised method once; avoid retrying an authorization code
 	// merely to probe whether the provider accepts Basic or body credentials.
-	endpoint := provider.Endpoint()
 	endpoint.AuthStyle = oauth2.AuthStyleInParams
 	if OauthConfig.ClientSecret != "" {
 		var metadata struct {
 			AuthMethods []string `json:"token_endpoint_auth_methods_supported"`
 		}
-		if err := provider.Claims(&metadata); err != nil {
+		if err := json.Unmarshal(rawClaims, &metadata); err != nil {
 			return nil, fmt.Errorf("read OIDC authentication methods: %w", err)
 		}
 		endpoint.AuthStyle = oauth2.AuthStyleInHeader
@@ -68,19 +89,11 @@ func NewOIDCAuth(
 			}
 		}
 	}
-	oauthConfig := &oauth2.Config{
+	return &oauth2.Config{
 		ClientID:     OauthConfig.ClientID,
 		ClientSecret: OauthConfig.ClientSecret,
 		RedirectURL:  OauthConfig.RedirectURL,
 		Endpoint:     endpoint,
 		Scopes:       scopes,
-	}
-
-	return &OIDCAuth{
-		OauthConfig:   oauthConfig,
-		AuthURLParams: authURLParams,
-		Verifier: provider.Verifier(&oidc.Config{
-			ClientID: OauthConfig.ClientID,
-		}),
 	}, nil
 }

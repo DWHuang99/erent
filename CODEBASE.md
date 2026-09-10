@@ -191,7 +191,7 @@ POST /api/v1/auth/logout
 - `oauth_model.go`：`OAuthInfo` 映射 oauth_infos，包括所属用户、账号、类型、邮箱、禁用状态、可空时间和加密凭证；`OAuthListItem` 仅包含可公开的账号元数据。
 - `oauth_repository.go`：`Repository`/`NewRepository` 保存 GORM 连接；`SaveToken` 插入记录；`GetOwnedTokenForUpdate` 在 Service 传入的事务内按 ID/用户执行 FOR UPDATE；`UpdateToken` 在同一事务内更新凭证字段；`getUserOauth` 仅查询用户元数据。内部 `deleteUserOauth` 尚未暴露 HTTP 路由。
 - `oauth_handler.go`：`OauthHandler`/`NewOauthHandler`、`Login`、`Callback`、`OauthList`、`RefreshToken`；使用统一响应封装；`getUserid` 读取 JWT 用户，`randomValue` 生成安全随机值。
-- `oauth_service.go`：`OauthService` 按 provider 保存 OIDC 实例，`TokenExchanger` 定义兑换/刷新接口，`IDTokenClaims` 提取账号与邮箱。StoreFlow/PopFlow 管理一次性 state；AuthCodeURL/authFor 选择 provider；Exchange/VerifyIDToken/SaveToken 验证身份并加密持久化；RefreshToken 开启事务，编排加锁读取、refreshTokenCredentials、更新与提交；toOauthInfo 加密初始凭证。
+- `oauth_service.go`：`OauthService` 按 provider 保存 OIDC 实例，直接注入具体的 `*upstreamdirectory.Directory` 处理兑换、刷新和验签，`IDTokenClaims` 提取账号与邮箱。StoreFlow/PopFlow 管理一次性 state；AuthCodeURL/authFor 选择 provider；Exchange/SaveToken 配合 同文件中的包内函数 verifyIDToken 验证身份并加密持久化；RefreshToken 开启事务，编排加锁读取、refreshTokenCredentials、更新与提交；toOauthInfo 加密初始凭证。
 - `errors.go`：隔离无效状态、provider、身份、归属及上游兑换/刷新错误。
 - `oauth_routes.go`：统一注册 /oauth/login、/oauth/callback、/oauth/list 和 /oauth/refresh；除 callback 外均要求 JWT。
 - `oauth_handler_test.go`、`oauth_service_test.go`：state、PKCE、provider 参数、过期、Redis 故障和损坏状态。
@@ -204,7 +204,7 @@ POST /api/v1/auth/logout
 
 ### `oidc/oidc.go`
 
-`LoginFlow` 保存 Provider、UserID、Nonce、Verifier、ExpiresAt；`OIDCAuth` 聚合 oauth2.Config、授权参数与 IDTokenVerifier。NewOIDCAuth 执行 discovery 并选择明确的认证方式，避免重复提交授权码。回调只从已消费的 flow 选择实例。
+`LoginFlow` 保存 Provider、UserID、Nonce、Verifier、ExpiresAt；`OIDCAuth` 保存 oauth2.Config、授权参数及 upstream 本地使用的 Provider/IDTokenVerifier，不保存远程状态。NewOIDCAuth 供 upstream 执行 discovery；NewRemoteOIDCAuth 直接接收具体的 upstream Directory，仅供 API 获取元数据并构建授权配置。两者共用配置构建函数，选择明确的认证方式，避免重复提交授权码。API service 通过包内函数 verifyIDToken 调用 Directory.Verifier，直接使用 VerifyResponse，并用 json.Unmarshal 解码 ClaimsJson；不包装为 IDToken，也不重复验证 issuer/audience/有效期。nonce 与账号归属仍由 service 校验。remote_test.go 覆盖具体 Directory 注入及远程构造，verify_test.go 覆盖上游响应直接返回和 Directory 缺失；directory_test.go 将原有业务测试的桩接入实际 Directory。回调只从已消费的 flow 选择实例。
 
 ### `openai/oai_config.go`
 
@@ -239,7 +239,7 @@ GET /api/v1/auth/verify
 
 ## 11. `internal/router`
 
-`routerall.go` 的 `AuthRouter`、`UserRouter` 接收具体的 `*user.Repository` 和 Casbin Enforcer，在路由包内创建 Service/Handler 并调用模块 `Register*Routes`；`OauthRouter` 接收 Redis client、OIDC 实例 map、TokenExchanger、OAuth Repository、加密密钥与 JWT manager，创建统一的 OAuth Service/Handler。健康检查和 `/ping` 由 `cmd/api` 注册。`routerall_test.go` 使用内存 SQLite 的真实 GORM Repository，覆盖注册、重复用户名、注册后登录、Casbin 首页权限、refresh Cookie、rotation、logout、当前用户、健康、Request ID 和未认证拒绝。
+`routerall.go` 的 `AuthRouter`、`UserRouter` 接收具体的 `*user.Repository` 和 Casbin Enforcer，在路由包内创建 Service/Handler 并调用模块 `Register*Routes`；`OauthRouter` 接收 Redis client、OIDC 实例 map、具体 upstream Directory、OAuth Repository、加密密钥与 JWT manager，创建统一的 OAuth Service/Handler。健康检查和 `/ping` 由 `cmd/api` 注册。`routerall_test.go` 使用内存 SQLite 的真实 GORM Repository，覆盖注册、重复用户名、注册后登录、Casbin 首页权限、refresh Cookie、rotation、logout、当前用户、健康、Request ID 和未认证拒绝。
 
 ## 12. `internal/testdatabase`
 
@@ -247,9 +247,10 @@ GET /api/v1/auth/verify
 
 ## 13. upstream 远程适配
 
-- `proto/upstream.proto`：ExchangeCode、RefreshToken 和包含 ID token 的 token 响应；使用 Timestamp 表达可选有效期。
+- `proto/upstream.proto`：ExchangeCode、RefreshToken 和包含 ID token 的 token 响应；使用 Timestamp 表达可选有效期。GetProvider 的返回字段与 oidc.Provider 的数据字段同名：issuer、authURL、tokenURL、deviceAuthURL、userInfoURL、jwksURL、algorithms、rawClaims，不包含锁、HTTP 客户端和密钥缓存；Verifier 定义验签后的 issuer、subject、audience、有效期、签发时间、nonce 和原始 JSON claims。后两个 RPC 已生成协议代码并由 upstreamserver 实现，API 已通过 NewRemoteOIDCAuth 接入。OIDCAuth 保留启动时的 Provider 供 GetProvider 读取。`internal/upstreamserver/provider_test.go` 覆盖元数据读取、未知 issuer 拒绝、ID token 验签与 claims 转换、错误脱敏和取消请求。
 - `internal/rpc/upstream/*.pb.go`：由 protoc 生成的消息、客户端和服务端注册代码，不手工编辑。
-- `internal/directory/upstream/upstreamdirectory.go`：实现 OAuth TokenExchanger，设置 RPC deadline，转换请求/响应和错误；不重试授权码或刷新请求。
+- `internal/directory/upstream/errors.go`：定义上游调用错误，OAuth 的 errors.go 保留同名别名以维持错误判断；Directory 不反向依赖 OAuth service 包。
+- `internal/directory/upstream/upstreamdirectory.go`：具体 Directory 统一提供 Exchange、RefreshToken、GetProvider、Verifier，设置 RPC deadline，转换请求/响应和错误；不重试授权码或刷新请求。
 - `internal/upstreamserver/server.go`：校验请求/provider，使用 PKCE VerifierOption 兑换、TokenSource 刷新，映射 provider 错误，注册标准 health，处理有界排空。
 - `internal/upstreamserver/server_test.go`：真实 gRPC 编解码配合模拟 OIDC/token 服务，覆盖 PKCE、token 字段、回调链路、错误、deadline、单次兑换与停止行为。
 - `internal/directory/upstream/refresh_test.go`、`internal/upstreamserver/refresh_test.go`：刷新请求校验、真实 token endpoint 的 refresh grant、可选 token 字段、错误与无重复请求。

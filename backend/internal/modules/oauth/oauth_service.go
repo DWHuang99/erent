@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	upstreamdirectory "erent/internal/directory/upstream"
 	rdb "erent/internal/middleware/redis"
 	"erent/internal/modules/oauth/oidc"
+	"erent/internal/rpc/upstream"
 	"erent/internal/security"
 
 	oidcgo "github.com/coreos/go-oidc/v3/oidc"
@@ -20,8 +22,6 @@ import (
 
 var ErrInvalidOAuthState = errors.New("invalid oauth state")
 
-var ErrInvalidIDToken = errors.New("invalid ID token")
-
 type IDTokenClaims struct {
 	Email string `json:"email"`
 	Auth  struct {
@@ -29,17 +29,11 @@ type IDTokenClaims struct {
 	} `json:"https://api.openai.com/auth"`
 }
 
-// TokenExchanger is implemented by the upstream directory adapter.
-type TokenExchanger interface {
-	Exchange(ctx context.Context, code, verifier, provider string) (*oauth2.Token, error)
-	RefreshToken(ctx context.Context, refreshtoken string, provider string) (*oauth2.Token, error)
-}
-
 type OauthService struct {
 	redisClient *redis.Client
 	// Provider configurations are initialized at startup and read-only during requests.
 	oidcAuth      map[string]*oidc.OIDCAuth
-	exchanger     TokenExchanger
+	directory     *upstreamdirectory.Directory
 	repository    *Repository
 	encryptionKey []byte
 }
@@ -47,14 +41,14 @@ type OauthService struct {
 func NewOauthService(
 	redisClient *redis.Client,
 	oidcAuth map[string]*oidc.OIDCAuth,
-	exchanger TokenExchanger,
+	directory *upstreamdirectory.Directory,
 	repository *Repository,
 	encryptionKey []byte,
 ) *OauthService {
 	return &OauthService{
 		redisClient:   redisClient,
 		oidcAuth:      oidcAuth,
-		exchanger:     exchanger,
+		directory:     directory,
 		repository:    repository,
 		encryptionKey: append([]byte(nil), encryptionKey...),
 	}
@@ -126,21 +120,18 @@ func (o *OauthService) Exchange(ctx context.Context, code, verifier, provider st
 	if _, err := o.authFor(provider); err != nil {
 		return nil, err
 	}
-	if o.exchanger == nil {
+	if o.directory == nil {
 		return nil, ErrUpstreamUnavailable
 	}
-	return o.exchanger.Exchange(ctx, code, verifier, provider)
+	return o.directory.Exchange(ctx, code, verifier, provider)
 }
 
-func (o *OauthService) VerifyIDToken(ctx context.Context, rawIDToken, provider string) (*oidcgo.IDToken, error) {
-	auth, err := o.authFor(provider)
-	if err != nil {
-		return nil, err
-	}
-	if auth.Verifier == nil {
+// verifyIDToken delegates ID token verification to upstream.
+func verifyIDToken(ctx context.Context, directory *upstreamdirectory.Directory, raw, provider string) (*upstream.VerifyResponse, error) {
+	if directory == nil {
 		return nil, ErrUpstreamUnavailable
 	}
-	return auth.Verifier.Verify(ctx, rawIDToken)
+	return directory.Verifier(ctx, raw, provider)
 }
 
 // RefreshToken locks the owned database row across refresh and persistence.
@@ -149,7 +140,7 @@ func (o *OauthService) RefreshToken(ctx context.Context, ownerID, id uint64) err
 	if ownerID == 0 || id == 0 {
 		return ErrInvalidRefresh
 	}
-	if o.repository == nil || o.exchanger == nil {
+	if o.repository == nil || o.directory == nil {
 		return ErrUpstreamUnavailable
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -185,7 +176,7 @@ func (o *OauthService) refreshTokenCredentials(ctx context.Context, model *OAuth
 	if strings.TrimSpace(string(plain)) == "" {
 		return ErrRefreshRejected
 	}
-	token, err := o.exchanger.RefreshToken(ctx, string(plain), provider)
+	token, err := o.directory.RefreshToken(ctx, string(plain), provider)
 	if err != nil {
 		return err
 	}
@@ -198,12 +189,12 @@ func (o *OauthService) refreshTokenCredentials(ctx context.Context, model *OAuth
 		if !ok {
 			return ErrInvalidIDToken
 		}
-		verified, err := o.VerifyIDToken(ctx, raw, provider)
+		verified, err := verifyIDToken(ctx, o.directory, raw, provider)
 		if err != nil {
 			return ErrInvalidIDToken
 		}
 		var claims IDTokenClaims
-		if err := verified.Claims(&claims); err != nil || claims.Auth.AccountID != model.AccountID {
+		if err := json.Unmarshal(verified.ClaimsJson, &claims); err != nil || claims.Auth.AccountID != model.AccountID {
 			return ErrInvalidIDToken
 		}
 		encrypted, err := security.Encrypt(o.encryptionKey, []byte(raw))
@@ -248,7 +239,7 @@ func (o *OauthService) SaveToken(ctx context.Context, token *oauth2.Token, flow 
 	if !ok || rawIDToken == "" {
 		return ErrInvalidIDToken
 	}
-	idToken, err := o.VerifyIDToken(ctx, rawIDToken, flow.Provider)
+	idToken, err := verifyIDToken(ctx, o.directory, rawIDToken, flow.Provider)
 	if errors.Is(err, ErrUpstreamUnavailable) || errors.Is(err, ErrProviderUnavailable) {
 		return err
 	}
@@ -256,7 +247,7 @@ func (o *OauthService) SaveToken(ctx context.Context, token *oauth2.Token, flow 
 		return ErrInvalidIDToken
 	}
 	var claims IDTokenClaims
-	if err := idToken.Claims(&claims); err != nil || strings.TrimSpace(claims.Auth.AccountID) == "" {
+	if err := json.Unmarshal(idToken.ClaimsJson, &claims); err != nil || strings.TrimSpace(claims.Auth.AccountID) == "" {
 		return ErrInvalidIDToken
 	}
 	if o.repository == nil || flow.Provider != "oai" {

@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"erent/internal/modules/oauth"
 	"erent/internal/rpc/upstream"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -34,7 +33,7 @@ func TestDirectoryRefreshPreservesOptionalFields(t *testing.T) {
 	}
 	for _, response := range []*upstream.TokenResponse{nil, {}, {AccessToken: " "}, {AccessToken: "access", ExpiresAt: &timestamppb.Timestamp{Seconds: 253402300800}}} {
 		client.response = response
-		if token, err := directory.RefreshToken(t.Context(), "refresh", "oai"); token != nil || !errors.Is(err, oauth.ErrRefreshFailed) {
+		if token, err := directory.RefreshToken(t.Context(), "refresh", "oai"); token != nil || !errors.Is(err, ErrRefreshFailed) {
 			t.Fatalf("invalid response accepted: %v", err)
 		}
 	}
@@ -45,9 +44,9 @@ func TestDirectoryRefreshMapsErrors(t *testing.T) {
 		code codes.Code
 		want error
 	}{
-		{codes.InvalidArgument, oauth.ErrInvalidRefresh}, {codes.FailedPrecondition, oauth.ErrProviderUnavailable},
-		{codes.Unauthenticated, oauth.ErrRefreshRejected}, {codes.Unavailable, oauth.ErrUpstreamUnavailable},
-		{codes.DeadlineExceeded, oauth.ErrRefreshTimeout}, {codes.Canceled, context.Canceled}, {codes.Internal, oauth.ErrRefreshFailed},
+		{codes.InvalidArgument, ErrInvalidRefresh}, {codes.FailedPrecondition, ErrProviderUnavailable},
+		{codes.Unauthenticated, ErrRefreshRejected}, {codes.Unavailable, ErrUpstreamUnavailable},
+		{codes.DeadlineExceeded, ErrRefreshTimeout}, {codes.Canceled, context.Canceled}, {codes.Internal, ErrRefreshFailed},
 	} {
 		directory := New(&refreshClient{err: status.Error(tc.code, "secret-provider-details")}, time.Second)
 		if token, err := directory.RefreshToken(t.Context(), "refresh", "oai"); token != nil || !errors.Is(err, tc.want) {

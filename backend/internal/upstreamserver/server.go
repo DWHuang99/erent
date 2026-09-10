@@ -2,6 +2,7 @@ package upstreamserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
@@ -13,6 +14,8 @@ import (
 	"erent/internal/modules/oauth/oidc"
 	"erent/internal/rpc/transport"
 	"erent/internal/rpc/upstream"
+
+	oidcgo "github.com/coreos/go-oidc/v3/oidc"
 
 	"golang.org/x/oauth2"
 	"google.golang.org/grpc"
@@ -106,6 +109,114 @@ func (s *server) RefreshToken(ctx context.Context, request *upstream.RefreshToke
 		return nil, status.Error(code, "token refresh failed")
 	}
 	return tokenResponse(token), nil
+}
+
+func (s *server) GetProvider(ctx context.Context, request *upstream.ProviderRequest) (*upstream.ProviderResponse, error) {
+	if request == nil || strings.TrimSpace(request.Issuer) == "" {
+		return nil, status.Error(codes.InvalidArgument, "issuer is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, status.FromContextError(err).Err()
+	}
+	for _, auth := range s.oidcAuth {
+		if auth == nil || auth.Provider == nil {
+			continue
+		}
+		response, err := toProviderResponse(auth.Provider)
+		if err != nil {
+			return nil, status.Error(codes.Internal, "invalid provider metadata")
+		}
+		if response.Issuer == request.Issuer {
+			return response, nil
+		}
+	}
+	return nil, status.Error(codes.FailedPrecondition, "issuer is not configured")
+}
+
+func toProviderResponse(provider *oidcgo.Provider) (*upstream.ProviderResponse, error) {
+	if provider == nil {
+		return nil, errors.New("missing provider")
+	}
+	// issuer, jwksURL and algorithms are unexported on oidcgo.Provider; recover them via the discovery document.
+	var metadata struct {
+		Issuer     string   `json:"issuer"`
+		JWKSURL    string   `json:"jwks_uri"`
+		Algorithms []string `json:"id_token_signing_alg_values_supported"`
+	}
+	if err := provider.Claims(&metadata); err != nil {
+		return nil, err
+	}
+	var rawClaims json.RawMessage
+	if err := provider.Claims(&rawClaims); err != nil {
+		return nil, err
+	}
+	endpoint := provider.Endpoint()
+	return &upstream.ProviderResponse{
+		Issuer:        metadata.Issuer,
+		AuthURL:       endpoint.AuthURL,
+		TokenURL:      endpoint.TokenURL,
+		DeviceAuthURL: endpoint.DeviceAuthURL,
+		UserInfoURL:   provider.UserInfoEndpoint(),
+		JwksURL:       metadata.JWKSURL,
+		Algorithms:    metadata.Algorithms,
+		RawClaims:     rawClaims,
+	}, nil
+}
+
+func (s *server) Verifier(ctx context.Context, request *upstream.VerifyRequest) (*upstream.VerifyResponse, error) {
+	if request == nil || strings.TrimSpace(request.Provider) == "" || strings.TrimSpace(request.Rawidtoken) == "" {
+		return nil, status.Error(codes.InvalidArgument, "rawidtoken and provider are required")
+	}
+	auth := s.oidcAuth[request.Provider]
+	if auth == nil || auth.Verifier == nil {
+		return nil, status.Error(codes.FailedPrecondition, "provider is not configured")
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, status.FromContextError(err).Err()
+	}
+	verified, err := auth.Verifier.Verify(ctx, request.Rawidtoken)
+	if err != nil {
+		code := exchangeErrorCode(ctx, err)
+		if code == codes.Internal {
+			code = codes.Unauthenticated
+		}
+		return nil, status.Error(code, "ID token verification failed")
+	}
+	response, err := toVerifyResponse(verified)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "invalid verified claims")
+	}
+	return response, nil
+}
+
+func toVerifyResponse(token *oidcgo.IDToken) (*upstream.VerifyResponse, error) {
+	if token == nil {
+		return nil, errors.New("missing ID token")
+	}
+	var claims json.RawMessage
+	if err := token.Claims(&claims); err != nil {
+		return nil, err
+	}
+	response := &upstream.VerifyResponse{
+		Issuer: token.Issuer, Subject: token.Subject,
+		Audience: append([]string(nil), token.Audience...),
+		Nonce:    token.Nonce, ClaimsJson: claims,
+	}
+	if !token.Expiry.IsZero() {
+		response.ExpiresAt = timestamppb.New(token.Expiry)
+		if err := response.ExpiresAt.CheckValid(); err != nil {
+			return nil, err
+		}
+	}
+	if !token.IssuedAt.IsZero() {
+		response.IssuedAt = timestamppb.New(token.IssuedAt)
+		if err := response.IssuedAt.CheckValid(); err != nil {
+			return nil, err
+		}
+	}
+	return response, nil
 }
 
 func Serve(ctx context.Context, cfg config.UpstreamServerConfig, oidcAuth map[string]*oidc.OIDCAuth) error {

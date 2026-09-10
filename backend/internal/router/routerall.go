@@ -2,6 +2,7 @@
 package apirouter
 
 import (
+	upstreamdirectory "erent/internal/directory/upstream"
 	jwtservice "erent/internal/middleware/jwt"
 	"erent/internal/modules/auth"
 	"erent/internal/modules/oauth"
@@ -47,14 +48,14 @@ func OauthRouter(
 	api *gin.RouterGroup,
 	redisClient *redis.Client,
 	oidcAuth map[string]*oidc.OIDCAuth,
-	exchanger oauth.TokenExchanger,
+	directory *upstreamdirectory.Directory,
 	repository *oauth.Repository,
 	jwtManager *jwtservice.JWTManager,
 	encryptionKey []byte,
 ) {
 	oauth.RegisterOauthRoutes(
 		api,
-		oauth.NewOauthHandler(oauth.NewOauthService(redisClient, oidcAuth, exchanger, repository, encryptionKey)),
+		oauth.NewOauthHandler(oauth.NewOauthService(redisClient, oidcAuth, directory, repository, encryptionKey)),
 		jwtManager,
 	)
 }

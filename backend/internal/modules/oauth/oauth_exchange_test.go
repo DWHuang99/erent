@@ -36,7 +36,7 @@ func TestCallbackMapsExchangeFailures(t *testing.T) {
 			defer client.Close()
 			service := newTestOAuthService(client)
 			exchanger := &exchangeStub{err: test.err}
-			service.exchanger = exchanger
+			service.directory = testDirectory(service, exchanger)
 			if err := service.StoreFlow("state", oidc.LoginFlow{Provider: "oai", UserID: 1, Nonce: "nonce", Verifier: "verifier", ExpiresAt: time.Now().Add(time.Minute)}, t.Context()); err != nil {
 				t.Fatal(err)
 			}
