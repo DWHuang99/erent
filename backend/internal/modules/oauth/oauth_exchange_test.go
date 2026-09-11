@@ -57,7 +57,7 @@ func TestCallbackMapsExchangeFailures(t *testing.T) {
 	}
 }
 func TestServiceWithoutExchangerReportsUnavailable(t *testing.T) {
-	if _, err := newTestOAuthService(nil).Exchange(context.Background(), "code", "verifier", "oai"); !errors.Is(err, ErrUpstreamUnavailable) {
+	if _, err := newTestOAuthService(nil).Exchange(context.Background(), "code", "verifier", "oai", "browser"); !errors.Is(err, ErrUpstreamUnavailable) {
 		t.Fatal(err)
 	}
 }

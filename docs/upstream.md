@@ -16,21 +16,29 @@ API 通过 GetProvider 获取元数据、通过 Verifier 验证 ID token；只�
 
 `GET /oauth/list` 仅返回 JWT 用户的账号元数据。`POST /oauth/refresh` 接收 `{id}`：Service 开启事务，Repository 按用户和 ID 加行锁查询，Service 解密既有 refresh token，经 directory 的 RefreshToken RPC 调用 upstream TokenSource；加密并保存新凭证后提交事务。可选 refresh/ID token 缺失时保留原值。它与本地 JWT refresh 接口相互独立；当前没有自动刷新任务。
 
+## 设备授权内部 RPC
+
+`GetDeviceFlowCode` 和 `PollDeviceFlow` 经 OAuth Service → Directory → upstream 调用。仅支持已配置的 `oai`，设备端点固定为 OpenAI 的 `/api/accounts/deviceauth/usercode` 和 `/api/accounts/deviceauth/token`，client ID 使用配置值。申请返回 `device_auth_id`、`user_code`、正整数 `interval_seconds` 和 `verification_url`；轮询成功返回内部 `authorization_code` 与 `code_verifier`，不是最终 token。设备 handler 已接入：`POST /oauth/logindevice?provider=oai` 和 `POST /oauth/callbackdevice?provider=oai` 均要求本站 JWT。申请将设备 ID、用户码、间隔、provider、用户 ID 和过期时间保存在 Redis；完成只用请求中的设备 ID 查找服务端记录，校验归属并原子消费后执行 Poll → Exchange → SaveToken。完成失败需重新申请，其他用户的请求不会消费原记录。现有前端授权页面尚未切换到设备入口。
+
+轮询只对 403/404 按上游间隔继续等待；普通 RPC deadline 不适用于整个设备轮询，最长等待 15 分钟并遵守更短的调用方 deadline，单次 HTTP 请求仍受 `UPSTREAM_OAUTH_TIMEOUT` 限制。handler 使用申请时保存的过期时间限制完整完成请求，忽略浏览器提交的验证码和间隔。Axios、Web Nginx 与 Gateway 仅对设备完成路径设置 16 分钟等待，其余请求沿用原超时。非等待错误不会自动重试：未启用对应 `ErrProviderUnavailable`，参数无效对应 `ErrInvalidDeviceFlow`，上游拒绝对应 `ErrDeviceFlowRejected`，响应异常对应 `ErrDeviceFlowFailed`，超时对应 `ErrDeviceFlowTimeout`，取消保留 `context.Canceled`，网络/限流/服务异常对应 `ErrUpstreamUnavailable`。错误不携带上游响应体。
+
+`ExchangeCodeRequest.flow_type` 由 handler 指定：空值或 `browser` 沿用配置的 RedirectURL；`device` 在 upstream 复制 OAuth 配置后使用 `https://auth.openai.com/deviceauth/callback`，不修改共享配置。两种流程均验证 ID token、账号声明并加密入库；SaveToken 的 `isbrowser` 仅控制 nonce 非空和匹配校验。
+
 ## 配置
 
 | 进程 | 变量 | 默认值 | 用途 |
 | --- | --- | --- | --- |
 | API | OAUTH_ENCRYPTION_KEY | 必填（启用 OAuth 时） | Base64 编码的 32 字节持久密钥，用于 AES-GCM 凭证加解密 |
 | API | UPSTREAM_GRPC_TARGET | localhost:50051 | host:port，Compose 内固定为 upstream:50051 |
-| API | UPSTREAM_GRPC_TIMEOUT | 10s | 单次 RPC 最大时长，沿用更短的调用方 deadline |
+| API | UPSTREAM_GRPC_TIMEOUT | 10s | 普通 RPC 最大时长，设备轮询另有 15 分钟上限，均沿用更短的调用方 deadline |
 | upstream | UPSTREAM_GRPC_ADDR | :50051 | gRPC 监听地址 |
-| upstream | UPSTREAM_OAUTH_TIMEOUT | 8s | 单次 provider token 请求最大时长 |
+| upstream | UPSTREAM_OAUTH_TIMEOUT | 8s | 单次 provider token 或设备授权 HTTP 请求最大时长 |
 | upstream | UPSTREAM_SHUTDOWN_TIMEOUT | 10s | 收到 SIGTERM 后的排空时间，超时强制停止 |
 | 两端 | OIDC_DISCOVERY_TIMEOUT | 10s | 启动阶段 discovery 超时 |
 | 两端 | OAI_ISSUER / OAI_CLIENT_ID / OAI_CLIENT_SECRET / OAI_REDIRECT_URL | 空 | 整组为空禁用；secret 可按 provider 要求留空 |
 | upstream | LOG_FILE | ./logs/backend/app.log | Compose 设置为独立的 upstream.log |
 
-所有时长必须是正的 Go duration，如 8s；地址要求有效 host:port。API 只在 OAuth 启用时加载 gRPC 配置并创建连接。upstream 不读取 JWT、数据库或 Redis 配置。根 .env 供 Compose 插值，Go 进程本身不自动读取 .env。
+所有时长必须是正的 Go duration，如 8s；地址要求有效 host:port。API 始终加载 gRPC 配置并创建延迟连接的 client/directory，不依赖 OAI 开关；仅 OAI 初始化与其加密密钥加载仍由 OAI 开关控制。API readiness 仅在已初始化 provider 时检查 upstream，创建 client 本身不会要求 upstream 在线。upstream 不读取 JWT、数据库或 Redis 配置。根 .env 供 Compose 插值，Go 进程本身不自动读取 .env。
 
 upstream 提供标准 gRPC health 服务：空 service 检查进程是否在服务；upstream.UpstreamService 检查 OAI 是否成功初始化。OAuth 禁用时 upstream 进程仍健康，API 不检查 OAuth 依赖；OAuth 启用时 API readiness 额外检查 upstream.UpstreamService，失败返回 503。健康检查不触发新的外部 OAuth 请求，也不保证提供方此刻可用。
 

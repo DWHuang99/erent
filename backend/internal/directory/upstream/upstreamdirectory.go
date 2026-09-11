@@ -21,6 +21,52 @@ func New(client upstream.UpstreamServiceClient, timeout time.Duration) *Director
 	return &Directory{client: client, timeout: timeout}
 }
 
+func deviceFlowError(err error) error {
+	switch status.Code(err) {
+	case codes.InvalidArgument:
+		return ErrInvalidDeviceFlow
+	case codes.FailedPrecondition, codes.NotFound:
+		return ErrProviderUnavailable
+	case codes.Unauthenticated, codes.PermissionDenied:
+		return ErrDeviceFlowRejected
+	case codes.DeadlineExceeded:
+		return ErrDeviceFlowTimeout
+	case codes.Canceled:
+		return context.Canceled
+	case codes.Unavailable:
+		return ErrUpstreamUnavailable
+	default:
+		return ErrDeviceFlowFailed
+	}
+}
+
+func (d *Directory) GetDeviceFlowCode(ctx context.Context, provider string) (*upstream.DeviceFlowResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, d.timeout)
+	defer cancel()
+	result, err := d.client.GetDeviceFlowCode(ctx, &upstream.DeviceFlowRequest{Provider: provider})
+	if err != nil {
+		return nil, deviceFlowError(err)
+	}
+	if result == nil || strings.TrimSpace(result.DeviceAuthId) == "" || strings.TrimSpace(result.UserCode) == "" || result.IntervalSeconds == 0 || result.IntervalSeconds > 900 || strings.TrimSpace(result.VerificationUrl) == "" {
+		return nil, ErrDeviceFlowFailed
+	}
+	return result, nil
+}
+
+func (d *Directory) PollDeviceFlow(ctx context.Context, provider, authID, userCode string, intervalSeconds uint32) (*upstream.DeviceAuthorizationResponse, error) {
+	// Human approval takes longer than the ordinary RPC request timeout.
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	defer cancel()
+	result, err := d.client.PollDeviceFlow(ctx, &upstream.PollDeviceFlowRequest{Provider: provider, DeviceAuthId: authID, UserCode: userCode, IntervalSeconds: intervalSeconds})
+	if err != nil {
+		return nil, deviceFlowError(err)
+	}
+	if result == nil || strings.TrimSpace(result.AuthorizationCode) == "" || strings.TrimSpace(result.CodeVerifier) == "" {
+		return nil, ErrDeviceFlowFailed
+	}
+	return result, nil
+}
+
 func (d *Directory) GetProvider(ctx context.Context, issuer string) (*upstream.ProviderResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, d.timeout)
 	defer cancel()
@@ -60,10 +106,10 @@ func providerError(err error) error {
 	}
 }
 
-func (d *Directory) Exchange(ctx context.Context, code, verifier, provider string) (*oauth2.Token, error) {
+func (d *Directory) Exchange(ctx context.Context, code, verifier, provider, flowType string) (*oauth2.Token, error) {
 	ctx, cancel := context.WithTimeout(ctx, d.timeout)
 	defer cancel()
-	response, err := d.client.ExchangeCode(ctx, &upstream.ExchangeCodeRequest{Code: code, CodeVerifier: verifier, Provider: provider})
+	response, err := d.client.ExchangeCode(ctx, &upstream.ExchangeCodeRequest{Code: code, CodeVerifier: verifier, Provider: provider, FlowType: flowType})
 	if err != nil {
 		switch status.Code(err) {
 		case codes.InvalidArgument:

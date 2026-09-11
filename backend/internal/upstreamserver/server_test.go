@@ -79,7 +79,7 @@ func TestExchangeRoundTripPreservesTokenAndPKCE(t *testing.T) {
 	}, "client-secret")
 	directory := upstreamdirectory.New(testRPC(t, auth, time.Second), time.Second)
 	before := time.Now()
-	token, err := directory.Exchange(t.Context(), "authorization-code", "pkce-verifier", "oai")
+	token, err := directory.Exchange(t.Context(), "authorization-code", "pkce-verifier", "oai", "browser")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestExchangeErrorContract(t *testing.T) {
 			}, "")
 			client := testRPC(t, auth, time.Second)
 			directory := upstreamdirectory.New(client, time.Second)
-			token, err := directory.Exchange(t.Context(), "authorization-code", "pkce-verifier", "oai")
+			token, err := directory.Exchange(t.Context(), "authorization-code", "pkce-verifier", "oai", "browser")
 			if token != nil || !errors.Is(err, tt.want) {
 				t.Fatalf("got token %v error %v; want %v", token, err, tt.want)
 			}
@@ -146,10 +146,10 @@ func TestExchangeValidatesRequestAndDisabledProvider(t *testing.T) {
 		}
 	}
 	directory := upstreamdirectory.New(client, time.Second)
-	if _, err := directory.Exchange(t.Context(), "code", "verifier", "oai"); !errors.Is(err, oauth.ErrProviderUnavailable) {
+	if _, err := directory.Exchange(t.Context(), "code", "verifier", "oai", "browser"); !errors.Is(err, oauth.ErrProviderUnavailable) {
 		t.Fatalf("disabled provider: %v", err)
 	}
-	if _, err := directory.Exchange(t.Context(), "", "verifier", "oai"); !errors.Is(err, oauth.ErrInvalidExchange) {
+	if _, err := directory.Exchange(t.Context(), "", "verifier", "oai", "browser"); !errors.Is(err, oauth.ErrInvalidExchange) {
 		t.Fatalf("invalid code: %v", err)
 	}
 }
@@ -165,7 +165,7 @@ func TestExchangeDeadlines(t *testing.T) {
 			auth := testProvider(t, func(w http.ResponseWriter, r *http.Request) { _ = r.ParseForm(); <-r.Context().Done() }, "")
 			directory := upstreamdirectory.New(testRPC(t, auth, test.serverTimeout), test.clientTimeout)
 			started := time.Now()
-			_, err := directory.Exchange(t.Context(), "code", "verifier", "oai")
+			_, err := directory.Exchange(t.Context(), "code", "verifier", "oai", "browser")
 			if !errors.Is(err, oauth.ErrExchangeTimeout) {
 				t.Fatalf("deadline error = %v", err)
 			}

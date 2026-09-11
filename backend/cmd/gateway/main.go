@@ -66,7 +66,9 @@ func newProxy(configuration gatewayConfig) (*httputil.ReverseProxy, error) {
 	transport.DialContext = (&net.Dialer{Timeout: configuration.dialTimeout, KeepAlive: 30 * time.Second}).DialContext
 	transport.ResponseHeaderTimeout = configuration.responseTimeout
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	proxy.Transport = transport
+	deviceTransport := transport.Clone()
+	deviceTransport.ResponseHeaderTimeout = 16 * time.Minute
+	proxy.Transport = deviceFlowTransport{ordinary: transport, device: deviceTransport}
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, proxyErr error) {
 		slog.Error("gateway upstream request failed", "error", proxyErr)
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -74,6 +76,16 @@ func newProxy(configuration gatewayConfig) (*httputil.ReverseProxy, error) {
 		_, _ = w.Write([]byte(`{"code":50200,"data":null,"message":"upstream unavailable"}`))
 	}
 	return proxy, nil
+}
+
+// Only device completion waits for interactive approval; other requests retain their timeout.
+type deviceFlowTransport struct{ ordinary, device *http.Transport }
+
+func (t deviceFlowTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.URL.Path == "/oauth/callbackdevice" {
+		return t.device.RoundTrip(r)
+	}
+	return t.ordinary.RoundTrip(r)
 }
 
 type lookupEnvironment func(string) (string, bool)

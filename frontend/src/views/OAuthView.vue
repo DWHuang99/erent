@@ -1,7 +1,72 @@
 <script setup>
 import { onUnmounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ArrowUpRight, CheckCircle2, ExternalLink, LoaderCircle, ShieldCheck, Terminal, X } from '@lucide/vue'
-import { completeCodexLogin, startCodexLogin } from '../services/oauth.js'
+import { completeCodexLogin, startCodexLogin, startCodexDeviceLogin, completeCodexDeviceLogin } from '../services/oauth.js'
+
+const router = useRouter()
+const device = ref(null)
+const deviceLoading = ref(false)
+const deviceWaiting = ref(false)
+const copyMessage = ref('')
+let deviceController
+
+async function startDevice() {
+  if (loading.value || saving.value || deviceLoading.value || deviceWaiting.value || disposed) return
+  close()
+  error.value = ''
+  success.value = false
+  expired.value = false
+  copyMessage.value = ''
+  device.value = null
+  const controller = new AbortController()
+  deviceController = controller
+  const active = () => !disposed && deviceController === controller && !controller.signal.aborted
+  deviceLoading.value = true
+  try {
+    const info = await startCodexDeviceLogin(controller.signal)
+    if (!active()) return
+    device.value = info
+    deviceLoading.value = false
+    deviceWaiting.value = true
+    await completeCodexDeviceLogin(info.device_auth_id, controller.signal)
+    if (!active()) return
+    success.value = true
+    device.value = null
+    await router.push({ name: 'authorized-accounts' })
+  } catch (cause) {
+    if (active()) {
+      error.value = cause.message
+      device.value = null
+    }
+  } finally {
+    if (active()) {
+      deviceLoading.value = false
+      deviceWaiting.value = false
+      deviceController = undefined
+    }
+  }
+}
+
+function cancelDevice(showMessage = true) {
+  deviceController?.abort()
+  deviceController = undefined
+  device.value = null
+  deviceLoading.value = false
+  deviceWaiting.value = false
+  copyMessage.value = ''
+  if (showMessage) error.value = '已停止等待。若已在授权页面确认，请先查看已授权账号；若未保存，请重新开始授权。'
+}
+
+async function copyDeviceCode() {
+  const current = device.value
+  try {
+    await navigator.clipboard.writeText(current.user_code)
+    if (!disposed && device.value === current) copyMessage.value = '授权码已复制'
+  } catch {
+    if (!disposed && device.value === current) copyMessage.value = '复制失败，请手动选择并复制授权码。'
+  }
+}
 
 const providers = [
   { id: 'kimi', name: 'Kimi', description: '通过设备授权快速登录 Kimi，完成后自动获取并保存授权凭证。', featured: true },
@@ -20,7 +85,7 @@ let expiryTimer
 let disposed = false
 
 async function start() {
-  if (loading.value || saving.value) return
+  if (loading.value || saving.value || deviceLoading.value || deviceWaiting.value) return
   loading.value = true
   error.value = ''
   success.value = false
@@ -67,6 +132,7 @@ function close() {
 
 onUnmounted(() => {
   disposed = true
+  cancelDevice(false)
   close()
 })
 </script>
@@ -92,7 +158,11 @@ onUnmounted(() => {
           </div>
           <div class="provider-actions">
             <span v-if="!provider.enabled" class="unavailable">暂未接入</span>
-            <button class="login-button" :disabled="!provider.enabled || loading || saving" :aria-busy="provider.enabled && loading" @click="start">
+            <button v-if="provider.enabled" class="login-button" :disabled="loading || saving || deviceLoading || deviceWaiting" @click="startDevice">
+              <LoaderCircle v-if="deviceLoading || deviceWaiting" class="spin" :size="17" />
+              {{ deviceLoading ? '正在获取设备码' : deviceWaiting ? '等待设备授权' : '设备授权' }}
+            </button>
+            <button class="login-button" :disabled="!provider.enabled || loading || saving || deviceLoading || deviceWaiting" :aria-busy="provider.enabled && loading" @click="start">
               <LoaderCircle v-if="provider.enabled && loading" class="spin" :size="17" />
               {{ provider.enabled && loading ? '正在获取授权链接' : `开始 ${provider.name} 登录` }}
             </button>
@@ -104,6 +174,24 @@ onUnmounted(() => {
           <div v-if="error" class="feedback error" role="alert">{{ error }}</div>
           <div v-if="success" class="feedback success" role="status"><CheckCircle2 :size="18" />Codex 授权成功，凭证已安全保存。</div>
           <div v-if="expired" class="feedback error" role="status">本次授权链接已过期，请重新开始登录。</div>
+          <section v-if="deviceLoading || deviceWaiting" class="authorization-panel" aria-label="Codex 设备授权" :aria-busy="deviceLoading">
+            <div class="authorization-heading">
+              <h3>Codex 设备授权</h3>
+              <button class="close-button" aria-label="取消设备授权" @click="cancelDevice()"><X :size="18" /></button>
+            </div>
+            <p v-if="deviceLoading" role="status">正在获取设备授权码…</p>
+            <template v-if="device">
+              <p>打开授权页面，登录并输入下方授权码。请勿将授权码分享给他人。</p>
+              <div class="device-code-row">
+                <code class="device-code">{{ device.user_code }}</code>
+                <button class="login-button" @click="copyDeviceCode">复制授权码</button>
+              </div>
+              <p v-if="copyMessage" role="status">{{ copyMessage }}</p>
+              <a class="authorization-link" :href="device.verification_url" target="_blank" rel="noopener noreferrer">打开授权页面 <ExternalLink :size="16" /></a>
+              <p role="status">正在等待授权，完成后会自动保存并进入已授权账号页。请保持本页打开。</p>
+              <p>本次设备会话最长有效期为 15 分钟，实际结果以服务端为准。取消后需重新获取授权码。</p>
+            </template>
+          </section>
           <section v-if="authUrl" class="authorization-panel" aria-label="完成 Codex 授权">
             <div class="authorization-heading">
               <h3>完成 Codex 授权</h3>
@@ -131,6 +219,8 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.device-code-row { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin: 16px 0; }
+.device-code { font-size: 24px; font-weight: 700; letter-spacing: .12em; overflow-wrap: anywhere; user-select: all; }
 .accounts-link { display: inline-flex; align-items: center; gap: 8px; margin-top: 26px; color: var(--text-primary); font-size: 14px; text-underline-offset: 4px; }
 .oauth-page { max-width: 1680px; margin: 0 auto; padding: 40px clamp(20px, 3.4vw, 58px) 36px; }
 .oauth-heading { margin-bottom: 34px; }
@@ -148,7 +238,7 @@ onUnmounted(() => {
 .codex { border-radius: 12px; background: linear-gradient(145deg, #b5acff, #6762f8); color: white; }
 .anthropic { color: #d77b60; font-size: 43px; font-weight: 400; }
 .antigravity { font-size: 44px; line-height: 1; background: linear-gradient(180deg, #f7aa48 15%, #4cb995 40%, #3485ff 70%); color: transparent; background-clip: text; }
-.provider-actions { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+.provider-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; flex-shrink: 0; }
 .unavailable { color: var(--text-secondary); font-size: 12px; }
 .provider-description { margin: 24px 0 0; font-size: 14px; line-height: 1.8; color: var(--text-secondary); }
 .login-button, .authorization-link { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 45px; padding: 11px 18px; border: 0; border-radius: 9px; background: #187cf2; color: white; font-size: 14px; font-weight: 650; cursor: pointer; text-decoration: none; }

@@ -34,7 +34,7 @@ func registerHealthRoutes(router *gin.Engine, configuration config.Config, insta
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable"})
 			return
 		}
-		if instances.upstreamConnection != nil {
+		if instances.upstreamConnection != nil && len(instances.oidcAuth) > 0 {
 			ctx, cancel := context.WithTimeout(c.Request.Context(), time.Second)
 			defer cancel()
 			result, err := healthpb.NewHealthClient(instances.upstreamConnection).Check(ctx,

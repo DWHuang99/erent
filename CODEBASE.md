@@ -118,6 +118,8 @@ distroless 容器 readiness 客户端，默认访问 `127.0.0.1:8080/health/read
 
 `Response`、`Success`、`SuccessWithStatus`、`Error` 统一 `{code,data,message}`；`UserInfo` 是不含密码的当前用户响应。
 
+`dto/response/oaiDeviceflow.go` 的 OaiDeviceflowResponse 包含设备 ID、用户码、uint32 秒间隔和验证链接；OaiPostTokenResponse 是供服务端兑换使用的授权码/verifier 结构，不是浏览器响应。
+
 ## 7. HTTP/JWT/Redis/Casbin Middleware
 
 ### `middleware/httpserver/middleware.go`
@@ -191,7 +193,7 @@ POST /api/v1/auth/logout
 - `oauth_model.go`：`OAuthInfo` 映射 oauth_infos，包括所属用户、账号、类型、邮箱、禁用状态、可空时间和加密凭证；`OAuthListItem` 仅包含可公开的账号元数据。
 - `oauth_repository.go`：`Repository`/`NewRepository` 保存 GORM 连接；`SaveToken` 插入记录；`GetOwnedTokenForUpdate` 在 Service 传入的事务内按 ID/用户执行 FOR UPDATE；`UpdateToken` 在同一事务内更新凭证字段；`getUserOauth` 仅查询用户元数据。`deleteUserOauth` 按 ID/用户物理删除凭证，受影响行数为零时返回 ErrOAuthNotFound。
 - `oauth_handler.go`：`OauthHandler`/`NewOauthHandler`、`Login`、`Callback`、`OauthList`、`RefreshToken`、`Delete`；删除只接受记录 ID，未找到或不属于当前用户时返回 404，数据库失败返回 500。浏览器 HTML 回调保存成功后 303 跳转同域 `/authorized-accounts`，JSON 回调保留统一响应，回调响应设置 no-store/no-referrer；`getUserid` 读取 JWT 用户，`randomValue` 生成安全随机值。
-- `oauth_service.go`：`OauthService` 按 provider 保存 OIDC 实例，直接注入具体的 `*upstreamdirectory.Directory` 处理兑换、刷新和验签，`IDTokenClaims` 提取账号与邮箱。StoreFlow/PopFlow 管理一次性 state；AuthCodeURL/authFor 选择 provider；Exchange/SaveToken 配合 同文件中的包内函数 verifyIDToken 验证身份并加密持久化；RefreshToken 开启事务，编排加锁读取、refreshTokenCredentials、更新与提交；toOauthInfo 加密初始凭证。
+- `oauth_service.go`：`OauthService` 按 provider 保存 OIDC 实例，直接注入具体的 `*upstreamdirectory.Directory` 处理兑换、刷新和验签，`IDTokenClaims` 提取账号与邮箱。StoreFlow/PopFlow 管理一次性 state；AuthCodeURL/authFor 选择 provider；Exchange/SaveToken 配合 同文件中的包内函数 verifyIDToken 验证身份并加密持久化；RefreshToken 开启事务，编排加锁读取、refreshTokenCredentials、更新与提交；toOauthInfo 加密初始凭证。GetDeviceFlowCode/Poll 通过 Directory 提供设备授权申请和等待能力，Poll 接收调用方 context 与上游返回的秒间隔，返回内部授权码及 verifier，尚未接入 HTTP handler。
 - `errors.go`：隔离无效状态、provider、身份、归属及上游兑换/刷新错误。
 - `oauth_routes.go`：统一注册 /oauth/login、/oauth/callback、/oauth/list、/oauth/refresh 和 /oauth/delete；除 callback 外均要求 JWT。
 - `oauth_handler_test.go`、`oauth_service_test.go`：state、PKCE、provider 参数、过期、Redis 故障和损坏状态。
@@ -248,11 +250,12 @@ GET /api/v1/auth/verify
 
 ## 13. upstream 远程适配
 
-- `proto/upstream.proto`：ExchangeCode、RefreshToken 和包含 ID token 的 token 响应；使用 Timestamp 表达可选有效期。GetProvider 的返回字段与 oidc.Provider 的数据字段同名：issuer、authURL、tokenURL、deviceAuthURL、userInfoURL、jwksURL、algorithms、rawClaims，不包含锁、HTTP 客户端和密钥缓存；Verifier 定义验签后的 issuer、subject、audience、有效期、签发时间、nonce 和原始 JSON claims。后两个 RPC 已生成协议代码并由 upstreamserver 实现，API 已通过 NewRemoteOIDCAuth 接入。OIDCAuth 保留启动时的 Provider 供 GetProvider 读取。`internal/upstreamserver/provider_test.go` 覆盖元数据读取、未知 issuer 拒绝、ID token 验签与 claims 转换、错误脱敏和取消请求。
+- `proto/upstream.proto`：GetDeviceFlowCode 返回设备 ID、用户码、秒间隔和验证链接；PollDeviceFlow 接收 provider、设备 ID、用户码和秒间隔，返回授权码和 verifier；两者使用独立请求/响应消息并生成 Go 协议代码。ExchangeCode、RefreshToken 和包含 ID token 的 token 响应；使用 Timestamp 表达可选有效期。GetProvider 的返回字段与 oidc.Provider 的数据字段同名：issuer、authURL、tokenURL、deviceAuthURL、userInfoURL、jwksURL、algorithms、rawClaims，不包含锁、HTTP 客户端和密钥缓存；Verifier 定义验签后的 issuer、subject、audience、有效期、签发时间、nonce 和原始 JSON claims。后两个 RPC 已生成协议代码并由 upstreamserver 实现，API 已通过 NewRemoteOIDCAuth 接入。OIDCAuth 保留启动时的 Provider 供 GetProvider 读取。`internal/upstreamserver/provider_test.go` 覆盖元数据读取、未知 issuer 拒绝、ID token 验签与 claims 转换、错误脱敏和取消请求。
 - `internal/rpc/upstream/*.pb.go`：由 protoc 生成的消息、客户端和服务端注册代码，不手工编辑。
 - `internal/directory/upstream/errors.go`：定义上游调用错误，OAuth 的 errors.go 保留同名别名以维持错误判断；Directory 不反向依赖 OAuth service 包。
-- `internal/directory/upstream/upstreamdirectory.go`：具体 Directory 统一提供 Exchange、RefreshToken、GetProvider、Verifier，设置 RPC deadline，转换请求/响应和错误；不重试授权码或刷新请求。
-- `internal/upstreamserver/server.go`：校验请求/provider，使用 PKCE VerifierOption 兑换、TokenSource 刷新，映射 provider 错误，注册标准 health，处理有界排空。
+- `internal/directory/upstream/upstreamdirectory.go`：具体 Directory 统一提供 Exchange、RefreshToken、GetProvider、Verifier、GetDeviceFlowCode、PollDeviceFlow，设置 RPC deadline，转换请求/响应和错误；设备轮询使用独立的 15 分钟上限并继承更短的调用方期限，其他 RPC 使用配置的请求超时；不重试授权码或刷新请求。
+- `internal/upstreamserver/server.go`：校验请求/provider，使用 PKCE VerifierOption 兑换、TokenSource 刷新，映射 provider 错误，注册标准 health，处理有界排空。GetDeviceFlowCode 直接请求固定 OpenAI usercode 端点，使用配置的 client ID，解析 user_code 和字符串 interval；postToken 执行一次查询并解析授权码/verifier；PollDeviceFlow 循环调用 postToken，每轮创建新请求，按返回间隔等待，仅 403/404 表示继续等待，其他错误脱敏返回。
+- `internal/upstreamserver/device_flow_test.go`：通过 Service、Directory、真实 gRPC 与模拟上游验证设备授权申请、间隔等待、连续 pending 后成功、请求体重建、响应字段/错误映射、取消与单次 HTTP 超时。
 - `internal/upstreamserver/server_test.go`：真实 gRPC 编解码配合模拟 OIDC/token 服务，覆盖 PKCE、token 字段、回调链路、错误、deadline、单次兑换与停止行为。
 - `internal/directory/upstream/refresh_test.go`、`internal/upstreamserver/refresh_test.go`：刷新请求校验、真实 token endpoint 的 refresh grant、可选 token 字段、错误与无重复请求。
 - `internal/rpc/transport/tls.go`、`tls_test.go`：加载 mTLS 身份与 CA；验证合法连接、缺少客户端身份、错误服务器名及不受信任 CA。
