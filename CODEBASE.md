@@ -43,10 +43,10 @@
 - `src/styles/main.css`：参考 CLI Proxy API Management Center 的暖白/黑色主题 tokens、全局基础样式与深色主题；
 - `tests/auth.test.js`：覆盖持久/会话 token 保存、登录 401、注册请求合同、重复用户名中文反馈、会话清理、401 刷新重试与并发刷新合并。
 
-- `src/services/oauth.js`：授权 URL 获取、回调 URL/state 校验与提交、账号列表及凭证刷新，校验统一响应合同并映射错误。
+- `src/services/oauth.js`：授权 URL 获取、回调 URL/state 校验与提交、账号列表、凭证刷新及删除，校验统一响应合同并映射错误。
 - `src/views/OAuthView.vue`：发起 Codex 授权、保存当前流程、手动回调入口和结果反馈。
-- `src/views/AuthorizedAccountsView.vue`：展示当前用户账号元数据、详情、重新授权入口及手动刷新按钮；刷新后重新加载列表。
-- `tests/oauth.test.js`：覆盖授权链接安全校验、state/回调合同、列表及刷新请求、响应与错误映射。
+- `src/views/AuthorizedAccountsView.vue`：账号卡片刷新按钮旁提供删除按钮，请求期间刷新与删除互斥，删除成功移除卡片、失败显示错误；展示当前用户账号元数据、详情、重新授权入口及手动刷新按钮；刷新后重新加载列表。
+- `tests/oauth.test.js`：覆盖授权链接安全校验、state/回调合同、列表、刷新及删除请求、响应与错误映射。
 
 ## 3. `backend/cmd`
 
@@ -189,15 +189,16 @@ POST /api/v1/auth/logout
 ### 通用 OAuth 层
 
 - `oauth_model.go`：`OAuthInfo` 映射 oauth_infos，包括所属用户、账号、类型、邮箱、禁用状态、可空时间和加密凭证；`OAuthListItem` 仅包含可公开的账号元数据。
-- `oauth_repository.go`：`Repository`/`NewRepository` 保存 GORM 连接；`SaveToken` 插入记录；`GetOwnedTokenForUpdate` 在 Service 传入的事务内按 ID/用户执行 FOR UPDATE；`UpdateToken` 在同一事务内更新凭证字段；`getUserOauth` 仅查询用户元数据。内部 `deleteUserOauth` 尚未暴露 HTTP 路由。
-- `oauth_handler.go`：`OauthHandler`/`NewOauthHandler`、`Login`、`Callback`、`OauthList`、`RefreshToken`；使用统一响应封装；`getUserid` 读取 JWT 用户，`randomValue` 生成安全随机值。
+- `oauth_repository.go`：`Repository`/`NewRepository` 保存 GORM 连接；`SaveToken` 插入记录；`GetOwnedTokenForUpdate` 在 Service 传入的事务内按 ID/用户执行 FOR UPDATE；`UpdateToken` 在同一事务内更新凭证字段；`getUserOauth` 仅查询用户元数据。`deleteUserOauth` 按 ID/用户物理删除凭证，受影响行数为零时返回 ErrOAuthNotFound。
+- `oauth_handler.go`：`OauthHandler`/`NewOauthHandler`、`Login`、`Callback`、`OauthList`、`RefreshToken`、`Delete`；删除只接受记录 ID，未找到或不属于当前用户时返回 404，数据库失败返回 500。浏览器 HTML 回调保存成功后 303 跳转同域 `/authorized-accounts`，JSON 回调保留统一响应，回调响应设置 no-store/no-referrer；`getUserid` 读取 JWT 用户，`randomValue` 生成安全随机值。
 - `oauth_service.go`：`OauthService` 按 provider 保存 OIDC 实例，直接注入具体的 `*upstreamdirectory.Directory` 处理兑换、刷新和验签，`IDTokenClaims` 提取账号与邮箱。StoreFlow/PopFlow 管理一次性 state；AuthCodeURL/authFor 选择 provider；Exchange/SaveToken 配合 同文件中的包内函数 verifyIDToken 验证身份并加密持久化；RefreshToken 开启事务，编排加锁读取、refreshTokenCredentials、更新与提交；toOauthInfo 加密初始凭证。
 - `errors.go`：隔离无效状态、provider、身份、归属及上游兑换/刷新错误。
-- `oauth_routes.go`：统一注册 /oauth/login、/oauth/callback、/oauth/list 和 /oauth/refresh；除 callback 外均要求 JWT。
+- `oauth_routes.go`：统一注册 /oauth/login、/oauth/callback、/oauth/list、/oauth/refresh 和 /oauth/delete；除 callback 外均要求 JWT。
 - `oauth_handler_test.go`、`oauth_service_test.go`：state、PKCE、provider 参数、过期、Redis 故障和损坏状态。
 - `oauth_exchange_test.go`（`exchangeStub`）：兑换参数、错误状态映射与信息隔离。
 - `oauth_provider_test.go`、`oauth_login_json_test.go`：多 provider 选择、回调仅信任 state 中的 provider、授权 URL JSON 合同。
-- `oauth_persistence_test.go`（`tokenExchange`）：签名/claims/nonce、加密密钥、用户绑定、重复账号与持久化错误。
+- `oauth_persistence_test.go`（`tokenExchange`）：签名/claims/nonce、加密密钥、用户绑定、重复账号与持久化错误；浏览器回调测试覆盖凭证先保存、固定跳转地址和重复回调拒绝。
+- `oauth_delete_test.go`：删除认证、参数校验、用户隔离、成功删除、重复删除与数据库失败的单一 JSON 响应。
 - `oauth_list_test.go`：认证、用户隔离、空列表及无凭证泄露。
 - `oauth_refresh_test.go`（`refreshExchange`）：JWT/归属、凭证更新、可选字段保留、身份校验、失败回滚。
 - `oauth_refresh_postgres_test.go`：通过 `OAUTH_REFRESH_TEST_DSN` 启用真实 PostgreSQL 测试，验证跨实例行锁串行刷新；未设置时跳过。
@@ -271,3 +272,9 @@ GET /api/v1/auth/verify
 | `.github/workflows/release.yml` | `main`、`v*` tag 或手动触发时向 GHCR 发布 API、Gateway、Upstream、Migrations、Web 五个同源码版本镜像，附加完整提交 SHA、default-branch `latest` 和 tag 标签 |
 
 维护规则：Handler 不直接访问 GORM；Service 直接依赖具体 Repository；Handler 需要替换 Service 时由 Handler 定义最小接口；Repository 不处理 HTTP/Cookie；refresh token 原值不进入日志或 Redis key；改变路由、模型、配置、测试或目录时同步本文和 `ARCHITECTURE.md`。
+
+## 本地 OAuth 回调入口
+
+- `backend/docker-compose.callback.yml`：可独立运行的 Nginx 回环地址 1455 接收服务，完整 Compose 通过 extends 复用。
+- `backend/nginx/oauth-callback.conf.template`：仅 `/auth/callback` 返回固定控制台地址的 302，保留查询参数，禁用日志和缓存并禁止 referrer。
+- `.scripts/start.sh`：普通和 debug 模式启动回调入口，返回 Vite 5173；完整 Compose 默认返回 Web 端口。

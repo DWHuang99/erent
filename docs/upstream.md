@@ -66,7 +66,7 @@ docker compose --env-file .env -f backend/docker-compose.yml exec upstream /grpc
 
 Nginx 与 Vite 均将 /oauth/ 转发到 Gateway。控制台通过携带 Bearer 凭证的 `GET /oauth/login?provider=oai` 获取授权链接（`Accept: application/json`）；直接在地址栏访问不携带该凭证。
 
-`OAI_REDIRECT_URL` 必须匹配所用客户端注册的回调地址，不能随意替换成网关地址。当前 Codex 本地登录配置使用 `http://localhost:1455/auth/callback`；API 与 upstream 必须使用相同的值，修改后需重新创建这两个容器。项目未监听 1455 端口：授权后如本地回调页面无法打开，将浏览器地址栏中的完整回调 URL 粘贴到 OAuth 页的手动回调入口，由前端校验本次 state 后提交到 `/oauth/callback`。不要在另一个 Codex 登录流程同时占用该端口时操作，也不要手动修改已生成授权链接中的 redirect_uri。
+OAI_REDIRECT_URL 在本地和部署环境统一使用 `http://localhost:1455/auth/callback`，API 与 upstream 必须一致。浏览器所在电脑的 Nginx 回调服务监听回环地址 1455，将 `/auth/callback` 的查询参数原样通过 302 转交指定控制台 `/oauth/callback`；后端继续校验一次性 state、兑换并保存凭证，HTML 请求成功后 303 跳转 `/authorized-accounts`。接收服务只开放此路径，关闭日志并返回 no-store/no-referrer。不要同时运行另一个占用 1455 的登录服务。手动回调仍可作为备用。
 
 直接运行时，先导入环境变量，在两个终端分别执行：
 
@@ -103,3 +103,12 @@ go -C backend build ./cmd/...
 ```
 
 集成测试使用真实 gRPC 编解码和模拟 OIDC/token HTTP 服务，覆盖 callback → service → directory → server、PKCE、token 类型/有效期、错误映射、state 单次消费、deadline 与无重复兑换；mTLS 测试覆盖合法身份、缺少客户端证书、错误服务名和不受信任 CA。
+
+## 本地回调接收服务
+
+- 完整本地 Compose 自动启动 `oauth-callback`，默认返回 `http://127.0.0.1:8088`（随 WEB_PORT 调整）。
+- `.scripts/start.sh` 普通和 debug 模式均启动接收服务，并设置返回 Vite 的 `http://127.0.0.1:5173`。
+- 手动运行 Go/Vite 时，在仓库根目录执行 `docker compose -f backend/docker-compose.callback.yml up -d`，独立服务默认返回 5173。
+- 使用线上控制台时，在浏览器所在电脑运行部署仓库的 `docker compose -f docker-compose.callback.yml up -d`，默认返回 `http://106.53.192.153`。仅在远程服务器监听 1455 无法接收本机浏览器的 localhost 请求。
+
+`OAUTH_CONSOLE_ORIGIN` 可设为实际控制台 origin（协议、主机和端口，不含路径或末尾斜杠），修改后重新创建接收服务。它必须与发起授权的控制台一致，以便使用同一后端 state 和浏览器登录状态。两套接收服务共用 1455，只启动一套；切换独立 Compose 与完整本地 Compose 前，先停止旧接收服务。修改 OAI_REDIRECT_URL 后需重新创建 API/upstream，并重新发起授权。

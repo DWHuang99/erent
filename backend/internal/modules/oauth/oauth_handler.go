@@ -93,6 +93,8 @@ func (h *OauthHandler) Login(c *gin.Context) {
 }
 
 func (h *OauthHandler) Callback(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	c.Header("Referrer-Policy", "no-referrer")
 	// 处理 OAuth2 回调逻辑
 	ctx := c.Request.Context()
 	state := c.Query("state")
@@ -153,6 +155,10 @@ func (h *OauthHandler) Callback(c *gin.Context) {
 		default:
 			response.Error(c, http.StatusInternalServerError, 500, "save token failed")
 		}
+		return
+	}
+	if strings.Contains(c.GetHeader("Accept"), "text/html") && !strings.Contains(c.GetHeader("Accept"), "application/json") {
+		c.Redirect(http.StatusSeeOther, "/authorized-accounts")
 		return
 	}
 	response.SuccessWithStatus(c, http.StatusOK, nil, "oauth credentials saved")
@@ -217,4 +223,28 @@ func (h *OauthHandler) OauthList(c *gin.Context) {
 	}
 	c.Header("Cache-Control", "no-store")
 	response.Success(c, gin.H{"oauthlist": oauthlist})
+}
+
+func (h *OauthHandler) Delete(c *gin.Context) {
+	ctx := c.Request.Context()
+	ownerID, err := getUserid(c)
+	if err != nil {
+		response.Error(c, http.StatusUnauthorized, 40100, "authentication required")
+		return
+	}
+	var req request.OAuthRefreshRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, 400, "invalid delete request")
+		return
+	}
+	err = h.service.deleteUserOauth(ctx, req.ID, ownerID)
+	if err != nil {
+		if errors.Is(err, ErrOAuthNotFound) {
+			response.Error(c, http.StatusNotFound, 404, "oauth credential not found")
+		} else {
+			response.Error(c, http.StatusInternalServerError, 500, "delete oauth failed")
+		}
+		return
+	}
+	response.Success(c, nil)
 }

@@ -1,0 +1,19 @@
+server {
+    listen 1455;
+    listen [::]:1455;
+    server_name localhost;
+    server_tokens off;
+    access_log off;
+    error_log /dev/null crit;
+    add_header Cache-Control "no-store" always;
+    add_header Referrer-Policy "no-referrer" always;
+
+    location = /auth/callback {
+        # The destination is operator configuration, never a request parameter.
+        return 302 ${OAUTH_CONSOLE_ORIGIN}/oauth/callback$is_args$args;
+    }
+
+    location / {
+        return 404;
+    }
+}

@@ -1,6 +1,13 @@
 name: ai-gateway-go-auth
 
 services:
+  oauth-callback:
+    extends:
+      file: docker-compose.callback.yml
+      service: oauth-callback
+    environment:
+      OAUTH_CONSOLE_ORIGIN: ${OAUTH_CONSOLE_ORIGIN:-http://127.0.0.1:${WEB_PORT:-8088}}
+
   postgres:
     image: postgres:17-alpine
     environment:
