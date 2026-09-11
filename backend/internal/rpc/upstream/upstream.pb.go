@@ -26,8 +26,10 @@ type ExchangeCodeRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Code  string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
 	// PKCE 校验用，对应 oauth2.VerifierOption(flow.Verifier)
-	CodeVerifier  string `protobuf:"bytes,2,opt,name=code_verifier,json=codeVerifier,proto3" json:"code_verifier,omitempty"`
-	Provider      string `protobuf:"bytes,3,opt,name=provider,proto3" json:"provider,omitempty"`
+	CodeVerifier string `protobuf:"bytes,2,opt,name=code_verifier,json=codeVerifier,proto3" json:"code_verifier,omitempty"`
+	Provider     string `protobuf:"bytes,3,opt,name=provider,proto3" json:"provider,omitempty"`
+	// Empty preserves the existing browser flow. Set by the API, not browser input.
+	FlowType      string `protobuf:"bytes,4,opt,name=flow_type,json=flowType,proto3" json:"flow_type,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -79,6 +81,13 @@ func (x *ExchangeCodeRequest) GetCodeVerifier() string {
 func (x *ExchangeCodeRequest) GetProvider() string {
 	if x != nil {
 		return x.Provider
+	}
+	return ""
+}
+
+func (x *ExchangeCodeRequest) GetFlowType() string {
+	if x != nil {
+		return x.FlowType
 	}
 	return ""
 }
@@ -256,6 +265,240 @@ func (x *ProviderRequest) GetIssuer() string {
 	return ""
 }
 
+type DeviceFlowRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Provider      string                 `protobuf:"bytes,1,opt,name=provider,proto3" json:"provider,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeviceFlowRequest) Reset() {
+	*x = DeviceFlowRequest{}
+	mi := &file_proto_upstream_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeviceFlowRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeviceFlowRequest) ProtoMessage() {}
+
+func (x *DeviceFlowRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_upstream_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeviceFlowRequest.ProtoReflect.Descriptor instead.
+func (*DeviceFlowRequest) Descriptor() ([]byte, []int) {
+	return file_proto_upstream_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *DeviceFlowRequest) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+type DeviceFlowResponse struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	DeviceAuthId    string                 `protobuf:"bytes,1,opt,name=device_auth_id,json=deviceAuthId,proto3" json:"device_auth_id,omitempty"`
+	UserCode        string                 `protobuf:"bytes,2,opt,name=user_code,json=userCode,proto3" json:"user_code,omitempty"`
+	IntervalSeconds uint32                 `protobuf:"varint,3,opt,name=interval_seconds,json=intervalSeconds,proto3" json:"interval_seconds,omitempty"`
+	VerificationUrl string                 `protobuf:"bytes,4,opt,name=verification_url,json=verificationUrl,proto3" json:"verification_url,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *DeviceFlowResponse) Reset() {
+	*x = DeviceFlowResponse{}
+	mi := &file_proto_upstream_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeviceFlowResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeviceFlowResponse) ProtoMessage() {}
+
+func (x *DeviceFlowResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_upstream_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeviceFlowResponse.ProtoReflect.Descriptor instead.
+func (*DeviceFlowResponse) Descriptor() ([]byte, []int) {
+	return file_proto_upstream_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *DeviceFlowResponse) GetDeviceAuthId() string {
+	if x != nil {
+		return x.DeviceAuthId
+	}
+	return ""
+}
+
+func (x *DeviceFlowResponse) GetUserCode() string {
+	if x != nil {
+		return x.UserCode
+	}
+	return ""
+}
+
+func (x *DeviceFlowResponse) GetIntervalSeconds() uint32 {
+	if x != nil {
+		return x.IntervalSeconds
+	}
+	return 0
+}
+
+func (x *DeviceFlowResponse) GetVerificationUrl() string {
+	if x != nil {
+		return x.VerificationUrl
+	}
+	return ""
+}
+
+type PollDeviceFlowRequest struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Provider     string                 `protobuf:"bytes,1,opt,name=provider,proto3" json:"provider,omitempty"`
+	DeviceAuthId string                 `protobuf:"bytes,2,opt,name=device_auth_id,json=deviceAuthId,proto3" json:"device_auth_id,omitempty"`
+	UserCode     string                 `protobuf:"bytes,3,opt,name=user_code,json=userCode,proto3" json:"user_code,omitempty"`
+	// Positive interval returned by GetDeviceFlowCode; maximum 900 seconds.
+	IntervalSeconds uint32 `protobuf:"varint,4,opt,name=interval_seconds,json=intervalSeconds,proto3" json:"interval_seconds,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *PollDeviceFlowRequest) Reset() {
+	*x = PollDeviceFlowRequest{}
+	mi := &file_proto_upstream_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PollDeviceFlowRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PollDeviceFlowRequest) ProtoMessage() {}
+
+func (x *PollDeviceFlowRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_upstream_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PollDeviceFlowRequest.ProtoReflect.Descriptor instead.
+func (*PollDeviceFlowRequest) Descriptor() ([]byte, []int) {
+	return file_proto_upstream_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *PollDeviceFlowRequest) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *PollDeviceFlowRequest) GetDeviceAuthId() string {
+	if x != nil {
+		return x.DeviceAuthId
+	}
+	return ""
+}
+
+func (x *PollDeviceFlowRequest) GetUserCode() string {
+	if x != nil {
+		return x.UserCode
+	}
+	return ""
+}
+
+func (x *PollDeviceFlowRequest) GetIntervalSeconds() uint32 {
+	if x != nil {
+		return x.IntervalSeconds
+	}
+	return 0
+}
+
+// Internal credentials: must not be returned to the browser.
+type DeviceAuthorizationResponse struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	AuthorizationCode string                 `protobuf:"bytes,1,opt,name=authorization_code,json=authorizationCode,proto3" json:"authorization_code,omitempty"`
+	CodeVerifier      string                 `protobuf:"bytes,2,opt,name=code_verifier,json=codeVerifier,proto3" json:"code_verifier,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *DeviceAuthorizationResponse) Reset() {
+	*x = DeviceAuthorizationResponse{}
+	mi := &file_proto_upstream_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeviceAuthorizationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeviceAuthorizationResponse) ProtoMessage() {}
+
+func (x *DeviceAuthorizationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_upstream_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeviceAuthorizationResponse.ProtoReflect.Descriptor instead.
+func (*DeviceAuthorizationResponse) Descriptor() ([]byte, []int) {
+	return file_proto_upstream_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *DeviceAuthorizationResponse) GetAuthorizationCode() string {
+	if x != nil {
+		return x.AuthorizationCode
+	}
+	return ""
+}
+
+func (x *DeviceAuthorizationResponse) GetCodeVerifier() string {
+	if x != nil {
+		return x.CodeVerifier
+	}
+	return ""
+}
+
 type ProviderResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Issuer        string                 `protobuf:"bytes,1,opt,name=issuer,proto3" json:"issuer,omitempty"`
@@ -272,7 +515,7 @@ type ProviderResponse struct {
 
 func (x *ProviderResponse) Reset() {
 	*x = ProviderResponse{}
-	mi := &file_proto_upstream_proto_msgTypes[4]
+	mi := &file_proto_upstream_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -284,7 +527,7 @@ func (x *ProviderResponse) String() string {
 func (*ProviderResponse) ProtoMessage() {}
 
 func (x *ProviderResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_upstream_proto_msgTypes[4]
+	mi := &file_proto_upstream_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -297,7 +540,7 @@ func (x *ProviderResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProviderResponse.ProtoReflect.Descriptor instead.
 func (*ProviderResponse) Descriptor() ([]byte, []int) {
-	return file_proto_upstream_proto_rawDescGZIP(), []int{4}
+	return file_proto_upstream_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ProviderResponse) GetIssuer() string {
@@ -367,7 +610,7 @@ type VerifyRequest struct {
 
 func (x *VerifyRequest) Reset() {
 	*x = VerifyRequest{}
-	mi := &file_proto_upstream_proto_msgTypes[5]
+	mi := &file_proto_upstream_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -379,7 +622,7 @@ func (x *VerifyRequest) String() string {
 func (*VerifyRequest) ProtoMessage() {}
 
 func (x *VerifyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_upstream_proto_msgTypes[5]
+	mi := &file_proto_upstream_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -392,7 +635,7 @@ func (x *VerifyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyRequest.ProtoReflect.Descriptor instead.
 func (*VerifyRequest) Descriptor() ([]byte, []int) {
-	return file_proto_upstream_proto_rawDescGZIP(), []int{5}
+	return file_proto_upstream_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *VerifyRequest) GetRawidtoken() string {
@@ -427,7 +670,7 @@ type VerifyResponse struct {
 
 func (x *VerifyResponse) Reset() {
 	*x = VerifyResponse{}
-	mi := &file_proto_upstream_proto_msgTypes[6]
+	mi := &file_proto_upstream_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -439,7 +682,7 @@ func (x *VerifyResponse) String() string {
 func (*VerifyResponse) ProtoMessage() {}
 
 func (x *VerifyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_upstream_proto_msgTypes[6]
+	mi := &file_proto_upstream_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -452,7 +695,7 @@ func (x *VerifyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyResponse.ProtoReflect.Descriptor instead.
 func (*VerifyResponse) Descriptor() ([]byte, []int) {
-	return file_proto_upstream_proto_rawDescGZIP(), []int{6}
+	return file_proto_upstream_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *VerifyResponse) GetIssuer() string {
@@ -508,11 +751,12 @@ var File_proto_upstream_proto protoreflect.FileDescriptor
 
 const file_proto_upstream_proto_rawDesc = "" +
 	"\n" +
-	"\x14proto/upstream.proto\x12\bupstream\x1a\x1fgoogle/protobuf/timestamp.proto\"j\n" +
+	"\x14proto/upstream.proto\x12\bupstream\x1a\x1fgoogle/protobuf/timestamp.proto\"\x87\x01\n" +
 	"\x13ExchangeCodeRequest\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12#\n" +
 	"\rcode_verifier\x18\x02 \x01(\tR\fcodeVerifier\x12\x1a\n" +
-	"\bprovider\x18\x03 \x01(\tR\bprovider\"V\n" +
+	"\bprovider\x18\x03 \x01(\tR\bprovider\x12\x1b\n" +
+	"\tflow_type\x18\x04 \x01(\tR\bflowType\"V\n" +
 	"\x13RefreshTokenRequest\x12#\n" +
 	"\rrefresh_token\x18\x01 \x01(\tR\frefreshToken\x12\x1a\n" +
 	"\bprovider\x18\x02 \x01(\tR\bprovider\"\xcc\x01\n" +
@@ -525,7 +769,22 @@ const file_proto_upstream_proto_rawDesc = "" +
 	"expires_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12\x19\n" +
 	"\bid_token\x18\x05 \x01(\tR\aidToken\")\n" +
 	"\x0fProviderRequest\x12\x16\n" +
-	"\x06issuer\x18\x01 \x01(\tR\x06issuer\"\x80\x02\n" +
+	"\x06issuer\x18\x01 \x01(\tR\x06issuer\"/\n" +
+	"\x11DeviceFlowRequest\x12\x1a\n" +
+	"\bprovider\x18\x01 \x01(\tR\bprovider\"\xad\x01\n" +
+	"\x12DeviceFlowResponse\x12$\n" +
+	"\x0edevice_auth_id\x18\x01 \x01(\tR\fdeviceAuthId\x12\x1b\n" +
+	"\tuser_code\x18\x02 \x01(\tR\buserCode\x12)\n" +
+	"\x10interval_seconds\x18\x03 \x01(\rR\x0fintervalSeconds\x12)\n" +
+	"\x10verification_url\x18\x04 \x01(\tR\x0fverificationUrl\"\xa1\x01\n" +
+	"\x15PollDeviceFlowRequest\x12\x1a\n" +
+	"\bprovider\x18\x01 \x01(\tR\bprovider\x12$\n" +
+	"\x0edevice_auth_id\x18\x02 \x01(\tR\fdeviceAuthId\x12\x1b\n" +
+	"\tuser_code\x18\x03 \x01(\tR\buserCode\x12)\n" +
+	"\x10interval_seconds\x18\x04 \x01(\rR\x0fintervalSeconds\"q\n" +
+	"\x1bDeviceAuthorizationResponse\x12-\n" +
+	"\x12authorization_code\x18\x01 \x01(\tR\x11authorizationCode\x12#\n" +
+	"\rcode_verifier\x18\x02 \x01(\tR\fcodeVerifier\"\x80\x02\n" +
 	"\x10ProviderResponse\x12\x16\n" +
 	"\x06issuer\x18\x01 \x01(\tR\x06issuer\x12\x18\n" +
 	"\aauthURL\x18\x02 \x01(\tR\aauthURL\x12\x1a\n" +
@@ -551,8 +810,10 @@ const file_proto_upstream_proto_rawDesc = "" +
 	"\tissued_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt\x12\x14\n" +
 	"\x05nonce\x18\x06 \x01(\tR\x05nonce\x12\x1f\n" +
 	"\vclaims_json\x18\a \x01(\fR\n" +
-	"claimsJson2\xa6\x02\n" +
-	"\x0fUpstreamService\x12F\n" +
+	"claimsJson2\xd0\x03\n" +
+	"\x0fUpstreamService\x12N\n" +
+	"\x11GetDeviceFlowCode\x12\x1b.upstream.DeviceFlowRequest\x1a\x1c.upstream.DeviceFlowResponse\x12X\n" +
+	"\x0ePollDeviceFlow\x12\x1f.upstream.PollDeviceFlowRequest\x1a%.upstream.DeviceAuthorizationResponse\x12F\n" +
 	"\fExchangeCode\x12\x1d.upstream.ExchangeCodeRequest\x1a\x17.upstream.TokenResponse\x12F\n" +
 	"\fRefreshToken\x12\x1d.upstream.RefreshTokenRequest\x1a\x17.upstream.TokenResponse\x12D\n" +
 	"\vGetProvider\x12\x19.upstream.ProviderRequest\x1a\x1a.upstream.ProviderResponse\x12=\n" +
@@ -570,34 +831,42 @@ func file_proto_upstream_proto_rawDescGZIP() []byte {
 	return file_proto_upstream_proto_rawDescData
 }
 
-var file_proto_upstream_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_proto_upstream_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_proto_upstream_proto_goTypes = []any{
-	(*ExchangeCodeRequest)(nil),   // 0: upstream.ExchangeCodeRequest
-	(*RefreshTokenRequest)(nil),   // 1: upstream.RefreshTokenRequest
-	(*TokenResponse)(nil),         // 2: upstream.TokenResponse
-	(*ProviderRequest)(nil),       // 3: upstream.ProviderRequest
-	(*ProviderResponse)(nil),      // 4: upstream.ProviderResponse
-	(*VerifyRequest)(nil),         // 5: upstream.VerifyRequest
-	(*VerifyResponse)(nil),        // 6: upstream.VerifyResponse
-	(*timestamppb.Timestamp)(nil), // 7: google.protobuf.Timestamp
+	(*ExchangeCodeRequest)(nil),         // 0: upstream.ExchangeCodeRequest
+	(*RefreshTokenRequest)(nil),         // 1: upstream.RefreshTokenRequest
+	(*TokenResponse)(nil),               // 2: upstream.TokenResponse
+	(*ProviderRequest)(nil),             // 3: upstream.ProviderRequest
+	(*DeviceFlowRequest)(nil),           // 4: upstream.DeviceFlowRequest
+	(*DeviceFlowResponse)(nil),          // 5: upstream.DeviceFlowResponse
+	(*PollDeviceFlowRequest)(nil),       // 6: upstream.PollDeviceFlowRequest
+	(*DeviceAuthorizationResponse)(nil), // 7: upstream.DeviceAuthorizationResponse
+	(*ProviderResponse)(nil),            // 8: upstream.ProviderResponse
+	(*VerifyRequest)(nil),               // 9: upstream.VerifyRequest
+	(*VerifyResponse)(nil),              // 10: upstream.VerifyResponse
+	(*timestamppb.Timestamp)(nil),       // 11: google.protobuf.Timestamp
 }
 var file_proto_upstream_proto_depIdxs = []int32{
-	7, // 0: upstream.TokenResponse.expires_at:type_name -> google.protobuf.Timestamp
-	7, // 1: upstream.VerifyResponse.expires_at:type_name -> google.protobuf.Timestamp
-	7, // 2: upstream.VerifyResponse.issued_at:type_name -> google.protobuf.Timestamp
-	0, // 3: upstream.UpstreamService.ExchangeCode:input_type -> upstream.ExchangeCodeRequest
-	1, // 4: upstream.UpstreamService.RefreshToken:input_type -> upstream.RefreshTokenRequest
-	3, // 5: upstream.UpstreamService.GetProvider:input_type -> upstream.ProviderRequest
-	5, // 6: upstream.UpstreamService.Verifier:input_type -> upstream.VerifyRequest
-	2, // 7: upstream.UpstreamService.ExchangeCode:output_type -> upstream.TokenResponse
-	2, // 8: upstream.UpstreamService.RefreshToken:output_type -> upstream.TokenResponse
-	4, // 9: upstream.UpstreamService.GetProvider:output_type -> upstream.ProviderResponse
-	6, // 10: upstream.UpstreamService.Verifier:output_type -> upstream.VerifyResponse
-	7, // [7:11] is the sub-list for method output_type
-	3, // [3:7] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	11, // 0: upstream.TokenResponse.expires_at:type_name -> google.protobuf.Timestamp
+	11, // 1: upstream.VerifyResponse.expires_at:type_name -> google.protobuf.Timestamp
+	11, // 2: upstream.VerifyResponse.issued_at:type_name -> google.protobuf.Timestamp
+	4,  // 3: upstream.UpstreamService.GetDeviceFlowCode:input_type -> upstream.DeviceFlowRequest
+	6,  // 4: upstream.UpstreamService.PollDeviceFlow:input_type -> upstream.PollDeviceFlowRequest
+	0,  // 5: upstream.UpstreamService.ExchangeCode:input_type -> upstream.ExchangeCodeRequest
+	1,  // 6: upstream.UpstreamService.RefreshToken:input_type -> upstream.RefreshTokenRequest
+	3,  // 7: upstream.UpstreamService.GetProvider:input_type -> upstream.ProviderRequest
+	9,  // 8: upstream.UpstreamService.Verifier:input_type -> upstream.VerifyRequest
+	5,  // 9: upstream.UpstreamService.GetDeviceFlowCode:output_type -> upstream.DeviceFlowResponse
+	7,  // 10: upstream.UpstreamService.PollDeviceFlow:output_type -> upstream.DeviceAuthorizationResponse
+	2,  // 11: upstream.UpstreamService.ExchangeCode:output_type -> upstream.TokenResponse
+	2,  // 12: upstream.UpstreamService.RefreshToken:output_type -> upstream.TokenResponse
+	8,  // 13: upstream.UpstreamService.GetProvider:output_type -> upstream.ProviderResponse
+	10, // 14: upstream.UpstreamService.Verifier:output_type -> upstream.VerifyResponse
+	9,  // [9:15] is the sub-list for method output_type
+	3,  // [3:9] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_proto_upstream_proto_init() }
@@ -611,7 +880,7 @@ func file_proto_upstream_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_upstream_proto_rawDesc), len(file_proto_upstream_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

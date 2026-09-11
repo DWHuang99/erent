@@ -85,17 +85,17 @@ func newApplicationInstances(configuration apiConfiguration) (_ *applicationInst
 	}
 	instances.jwtManager = jwtservice.NewJWTManager(configuration.runtime.JWT)
 
+	credentials, err := transport.ClientCredentials(configuration.upstream.TLS)
+	if err != nil {
+		return nil, fmt.Errorf("initialize upstream transport: %w", err)
+	}
+	instances.upstreamConnection, err = grpc.NewClient(configuration.upstream.Target,
+		grpc.WithTransportCredentials(credentials), grpc.WithDisableRetry())
+	if err != nil {
+		return nil, fmt.Errorf("create upstream gRPC client: %w", err)
+	}
+	instances.upstreamDirectory = upstreamdirectory.New(upstream.NewUpstreamServiceClient(instances.upstreamConnection), configuration.upstream.Timeout)
 	if configuration.oai.Enabled() {
-		credentials, err := transport.ClientCredentials(configuration.upstream.TLS)
-		if err != nil {
-			return nil, fmt.Errorf("initialize upstream transport: %w", err)
-		}
-		instances.upstreamConnection, err = grpc.NewClient(configuration.upstream.Target,
-			grpc.WithTransportCredentials(credentials), grpc.WithDisableRetry())
-		if err != nil {
-			return nil, fmt.Errorf("create upstream gRPC client: %w", err)
-		}
-		instances.upstreamDirectory = upstreamdirectory.New(upstream.NewUpstreamServiceClient(instances.upstreamConnection), configuration.upstream.Timeout)
 		oidcContext, cancelOIDC := context.WithTimeout(
 			context.Background(),
 			configuration.runtime.OIDCDiscoveryTimeout,

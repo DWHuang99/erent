@@ -12,4 +12,6 @@ func RegisterOauthRoutes(api *gin.RouterGroup, handler *OauthHandler, jwtManager
 	api.GET("/list", jwtservice.JwtFilter(jwtManager), handler.OauthList)
 	api.POST("/refresh", jwtservice.JwtFilter(jwtManager), handler.RefreshToken)
 	api.POST("/delete", jwtservice.JwtFilter(jwtManager), handler.Delete)
+	api.POST("/logindevice", jwtservice.JwtFilter(jwtManager), handler.LoginDeviceFlow)
+	api.POST("/callbackdevice", jwtservice.JwtFilter(jwtManager), handler.CallbackDeviceFlow)
 }

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestGatewayHealthIsLocalAndOtherRoutesAreProxied(t *testing.T) {
@@ -42,5 +43,24 @@ func TestLoadGatewayConfigRejectsInvalidValues(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected invalid address error")
+	}
+}
+
+func TestDeviceCompletionOutlivesOrdinaryHeaderTimeout(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { time.Sleep(60 * time.Millisecond); w.WriteHeader(200) }))
+	defer origin.Close()
+	proxy, err := newProxy(gatewayConfig{upstreamURL: origin.URL, dialTimeout: time.Second, responseTimeout: 10 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		path string
+		want int
+	}{{"/oauth/callbackdevice", 200}, {"/oauth/list", 502}} {
+		result := httptest.NewRecorder()
+		proxy.ServeHTTP(result, httptest.NewRequest("POST", test.path, nil))
+		if result.Code != test.want {
+			t.Fatalf("%s: %d", test.path, result.Code)
+		}
 	}
 }

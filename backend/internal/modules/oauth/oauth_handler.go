@@ -129,6 +129,7 @@ func (h *OauthHandler) Callback(c *gin.Context) {
 		code,
 		flow.Verifier,
 		flow.Provider,
+		"browser",
 	)
 	if err != nil {
 		switch {
@@ -144,7 +145,122 @@ func (h *OauthHandler) Callback(c *gin.Context) {
 		return
 	}
 
-	if err := h.service.SaveToken(ctx, oauthToken, flow); err != nil {
+	if err := h.service.SaveToken(ctx, oauthToken, flow, true); err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidIDToken):
+			response.Error(c, http.StatusBadGateway, 502, "invalid provider identity")
+		case errors.Is(err, ErrInvalidOAuthState):
+			response.Error(c, http.StatusBadRequest, 400, "invalid_state")
+		case errors.Is(err, ErrUpstreamUnavailable), errors.Is(err, ErrProviderUnavailable):
+			response.Error(c, http.StatusServiceUnavailable, 503, "oauth service unavailable")
+		default:
+			response.Error(c, http.StatusInternalServerError, 500, "save token failed")
+		}
+		return
+	}
+	if strings.Contains(c.GetHeader("Accept"), "text/html") && !strings.Contains(c.GetHeader("Accept"), "application/json") {
+		c.Redirect(http.StatusSeeOther, "/authorized-accounts")
+		return
+	}
+	response.SuccessWithStatus(c, http.StatusOK, nil, "oauth credentials saved")
+}
+
+func (h *OauthHandler) LoginDeviceFlow(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	ctx := c.Request.Context()
+	ownerID, err := getUserid(c)
+	if err != nil {
+		response.Error(c, 401, 40100, "authentication required")
+		return
+	}
+	provider := c.Query("provider")
+	startedAt := time.Now()
+	usercodeinfo, err := h.service.GetDeviceFlowCode(ctx, provider)
+	if err != nil {
+		deviceFlowErrorResponse(c, err)
+		return
+	}
+	flow := deviceLoginFlow{Provider: provider, UserID: ownerID, DeviceAuthID: usercodeinfo.DeviceAuthID, UserCode: usercodeinfo.UserCode, Interval: usercodeinfo.Interval, ExpiresAt: startedAt.Add(15 * time.Minute)}
+	if err := h.service.storeDeviceFlow(ctx, flow); err != nil {
+		response.Error(c, 500, 500, "save device login state failed")
+		return
+	}
+	response.Success(c, gin.H{
+		"device_auth_id":   usercodeinfo.DeviceAuthID,
+		"user_code":        usercodeinfo.UserCode,
+		"interval":         usercodeinfo.Interval,
+		"verification_url": usercodeinfo.VerificationURL,
+	})
+}
+
+func deviceFlowErrorResponse(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrInvalidDeviceFlow), errors.Is(err, ErrDeviceFlowRejected):
+		response.Error(c, 400, 400, "device authorization rejected")
+	case errors.Is(err, ErrDeviceFlowTimeout), errors.Is(err, context.DeadlineExceeded):
+		response.Error(c, 504, 504, "device authorization timed out")
+	case errors.Is(err, context.Canceled):
+		response.Error(c, 408, 408, "device authorization canceled")
+	case errors.Is(err, ErrProviderUnavailable), errors.Is(err, ErrUpstreamUnavailable):
+		response.Error(c, 503, 503, "oauth service unavailable")
+	default:
+		response.Error(c, 502, 502, "device authorization failed")
+	}
+}
+
+func (h *OauthHandler) CallbackDeviceFlow(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	ctx := c.Request.Context()
+	provider := c.Query("provider")
+	ownerID, err := getUserid(c)
+	if err != nil {
+		response.Error(c, http.StatusUnauthorized, 40100, "authentication required")
+		return
+	}
+	var req request.OAuthPollRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, 400, "invalid poll request")
+		return
+	}
+	flow, err := h.service.popDeviceFlow(ctx, req.DeviceAuthID, provider, ownerID)
+	if err != nil {
+		if errors.Is(err, ErrInvalidOAuthState) {
+			response.Error(c, 400, 400, "invalid_state")
+		} else {
+			response.Error(c, 500, 500, "load device login state failed")
+		}
+		return
+	}
+	ctx, cancel := context.WithDeadline(ctx, flow.ExpiresAt)
+	defer cancel()
+	verifyinfo, err := h.service.Poll(ctx, flow.DeviceAuthID, flow.UserCode, flow.Interval, flow.Provider)
+	if err != nil {
+		deviceFlowErrorResponse(c, err)
+		return
+	}
+
+	oauthToken, err := h.service.Exchange(
+		ctx,
+		verifyinfo.Code,
+		verifyinfo.CodeVerifier,
+		provider,
+		"device",
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidExchange), errors.Is(err, ErrExchangeRejected):
+			response.Error(c, http.StatusBadRequest, 400, "token exchange rejected")
+		case errors.Is(err, ErrProviderUnavailable), errors.Is(err, ErrUpstreamUnavailable):
+			response.Error(c, http.StatusServiceUnavailable, 503, "oauth service unavailable")
+		case errors.Is(err, ErrExchangeTimeout):
+			response.Error(c, http.StatusGatewayTimeout, 504, "token exchange timed out")
+		default:
+			response.Error(c, http.StatusBadGateway, 502, "token exchange failed")
+		}
+		return
+	}
+
+	if err := h.service.SaveToken(ctx, oauthToken, oidc.LoginFlow{Provider: provider, UserID: ownerID}, false); err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidIDToken):
 			response.Error(c, http.StatusBadGateway, 502, "invalid provider identity")

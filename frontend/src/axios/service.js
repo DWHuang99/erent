@@ -42,6 +42,13 @@ function requestNewAccessToken() {
   return refreshRequest
 }
 
+// Device completion waits for human approval; ordinary requests keep their existing timeout.
+axiosInstance.interceptors.request.use((config) => {
+  if (config.url?.split('?')[0] === '/oauth/callbackdevice') {
+    config.timeout = 16 * 60 * 1000
+  }
+  return config
+})
 axiosInstance.interceptors.request.use(defaultRequestInterceptor)
 axiosInstance.interceptors.response.use(defaultResponseInterceptor)
 axiosInstance.interceptors.response.use(undefined, async (error) => {

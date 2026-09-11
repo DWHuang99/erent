@@ -22,16 +22,15 @@ func loadAPIConfiguration() (apiConfiguration, error) {
 	if err != nil {
 		return apiConfiguration{}, fmt.Errorf("load OIDC configuration for oai: %w", err)
 	}
-	var upstreamConfiguration config.UpstreamClientConfig
+	upstreamConfiguration, err := config.LoadUpstreamClientConfig()
+	if err != nil {
+		return apiConfiguration{}, fmt.Errorf("load upstream configuration: %w", err)
+	}
 	var encryptionKey []byte
 	if oaiConfiguration.Enabled() {
 		encryptionKey, err = config.LoadOAuthEncryptionKey()
 		if err != nil {
 			return apiConfiguration{}, err
-		}
-		upstreamConfiguration, err = config.LoadUpstreamClientConfig()
-		if err != nil {
-			return apiConfiguration{}, fmt.Errorf("load upstream configuration: %w", err)
 		}
 	}
 	return apiConfiguration{

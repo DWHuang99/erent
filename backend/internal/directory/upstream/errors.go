@@ -3,6 +3,10 @@ package upstreamdirectory
 import "errors"
 
 var (
+	ErrInvalidDeviceFlow   = errors.New("invalid device authorization request")
+	ErrDeviceFlowRejected  = errors.New("device authorization rejected")
+	ErrDeviceFlowFailed    = errors.New("device authorization failed")
+	ErrDeviceFlowTimeout   = errors.New("device authorization timed out")
 	ErrInvalidRefresh      = errors.New("invalid token refresh request")
 	ErrRefreshRejected     = errors.New("refresh token rejected; reauthorization required")
 	ErrRefreshFailed       = errors.New("token refresh failed")
