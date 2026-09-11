@@ -80,15 +80,18 @@ GET /oauth/login?provider=oai  # JWT
 GET /oauth/callback           # state 绑定身份，不接收 provider
 GET /oauth/list               # JWT
 POST /oauth/refresh           # JWT，JSON {id}
+POST /oauth/delete            # JWT，JSON {id}
 ```
 
 `OauthService` 按 provider 保存 OIDC 实例。Login 校验 provider 和当前用户，生成随机 state、nonce 与 PKCE verifier，将 Provider、UserID、Nonce、Verifier、ExpiresAt 以 `oidc:flow:<state>` 保存到 Redis，TTL 为 5 分钟；返回统一 JSON 中的授权 URL，由前端打开。Callback 使用 Redis `GETDEL` 一次性消费 state，仅使用流程中保存的 provider 和用户身份，通过 directory 兑换 token，验证 ID token 签名、issuer、audience、nonce 和账号声明，再加密保存凭证。当前装配 OAI，scopes 为 openid、profile、email、offline_access。
 
-列表只按 JWT 用户查询账号元数据，返回 `data.oauthlist`，空列表为 `[]`，不查询或返回 token。前端 `/oauth` 提供授权及手动粘贴回调 URL 的入口，`/authorized-accounts` 展示账号并提供刷新按钮。HTTP 响应统一为 `{code,data,message}`；回调成功返回 `oauth credentials saved`。
+列表只按 JWT 用户查询账号元数据，返回 `data.oauthlist`，空列表为 `[]`，不查询或返回 token。前端 `/oauth` 提供授权及手动粘贴回调 URL 的入口，`/authorized-accounts` 展示账号并提供刷新及删除按钮；删除期间禁用该账号的刷新和删除操作，成功后移除卡片并更新计数，失败保留卡片并显示错误。HTTP 响应统一为 `{code,data,message}`；回调保存成功后，浏览器 HTML 请求通过 303 跳转到同域 `/authorized-accounts`；JSON 请求或未指定 HTML 的请求仍返回 `oauth credentials saved`。回调响应禁止缓存并设置 no-referrer。
+
+删除只接受记录 ID，复用 OAuthRefreshRequest 的必填非零 ID 校验，用户身份取自 JWT。Repository 按 `id + user_id` 物理删除本地凭证，不调用上游撤销接口；成功返回 200，记录不存在、已删除或属于其他用户均返回 404，数据库错误返回 500，每次只输出一个统一 JSON 响应。
 
 手动刷新只接受记录 ID。Service 开启最多 15 秒的事务流程，Repository 在该事务内执行 `WHERE id = ? AND user_id = ? FOR UPDATE`，锁定用户自己的记录；Service 解密数据库中的 refresh token，按记录类型选择 provider，经 directory 的 RefreshToken RPC 调用 upstream 的 `oauth2.Config.TokenSource`。Service 校验可选的新 ID token 仍属于原账号，加密新凭证，再由 Repository 在同一事务更新凭证字段并提交；失败回滚。上游未返回 refresh token 或 ID token 时保留旧值，未返回到期时间时清空旧到期时间。数据库行锁使多个 API 实例串行读取同一账号的最新凭证。上游刷新和数据库提交无法组成跨系统原子事务，提交失败时上游已轮换的 token 无法回滚。
 
-directory/server 使用有界 context，传递 access token、refresh token、ID token、token type 和可选 expiry，隔离上游错误详情。错误合同、mTLS 与无重试约定见 `docs/upstream.md`。当前没有后台定时刷新任务，也不自动跳转处理本地 1455 回调。
+directory/server 使用有界 context，传递 access token、refresh token、ID token、token type 和可选 expiry，隔离上游错误详情。错误合同、mTLS 与无重试约定见 `docs/upstream.md`。当前没有后台定时刷新任务，本地 1455 回调由浏览器所在电脑的 Nginx 接收服务通过 302 转交控制台 `/oauth/callback`。
 
 ## 4. 登录调用链
 
@@ -226,7 +229,9 @@ Compose 文件位于 `backend/`；API/Gateway build context 是当前后端目�
 - 已实现：Vue 3 登录页与受保护首页、登录后跳转、access token 会话恢复、自动 refresh 重试、退出登录、响应式导航和明暗主题；Node/Nginx 多阶段生产镜像提供 SPA 回退、静态资源缓存及同源 API/readiness 代理；
 - 已实现：后端注册、登录、access JWT、Redis refresh rotation、logout、当前用户、初始化管理员、Casbin 三角色首页权限、readiness；
 - 已实现：OIDC discovery、一次性 state、PKCE、nonce 与 ID token 验证、多 provider Service、凭证加密持久化、用户隔离列表与手动刷新、OAuth 授权页与已授权账号页、upstream gRPC 兑换/刷新、mTLS 与健康检查；
-- 未实现：OAuth 后台定时刷新、授权完成自动跳转，以及除 OAI 外的 provider 启动装配；
+- 未实现：OAuth 后台定时刷新，以及除 OAI 外的 provider 启动装配；
 - 未实现：真实验证码服务、改密、多设备会话管理、角色/策略管理、细粒度业务权限、审计；
 - 未实现：Provider、模型目录、Chat Completions、SSE、WebSocket；
 - 未实现：API Key、限流、用量、钱包和计费。
+
+本地 `oauth-callback` 服务仅绑定 IPv4/IPv6 回环地址 1455，使用固定配置的 `OAUTH_CONSOLE_ORIGIN` 将回调参数转交控制台，不处理 token、不接受请求指定跳转目标。完整 Compose 默认返回 Web 8088，开发启动脚本返回 Vite 5173。远程部署使用部署仓库的独立 Compose 在浏览器电脑运行该入口。

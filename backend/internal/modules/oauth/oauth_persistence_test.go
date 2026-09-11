@@ -239,6 +239,39 @@ func TestLoginCallbackBindsAuthenticatedUserAndConsumesState(t *testing.T) {
 	}
 }
 
+func TestBrowserCallbackRedirectsAfterSaving(t *testing.T) {
+	service, db, key := persistenceService(t)
+	redisServer := miniredis.RunT(t)
+	service.redisClient = redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = service.redisClient.Close() })
+	flow := oidc.LoginFlow{Provider: "oai", UserID: 1, Nonce: "nonce", Verifier: "verifier", ExpiresAt: time.Now().Add(time.Minute)}
+	if err := service.StoreFlow("browser-state", flow, t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	service.directory = testDirectory(service, &tokenExchange{token: signedToken(t, key, nil)})
+	router := gin.New()
+	router.GET("/oauth/callback", NewOauthHandler(service).Callback)
+	request := httptest.NewRequest(http.MethodGet, "/oauth/callback?state=browser-state&code=code", nil)
+	request.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/authorized-accounts" {
+		t.Fatalf("callback = %d: %s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Referrer-Policy") != "no-referrer" {
+		t.Fatal("callback must not cache or forward its URL as referrer")
+	}
+	var saved OAuthInfo
+	if err := db.First(&saved).Error; err != nil || saved.UserID != 1 {
+		t.Fatalf("credentials not saved before redirect: %v", err)
+	}
+	replay := httptest.NewRecorder()
+	router.ServeHTTP(replay, request)
+	if replay.Code != http.StatusBadRequest || replay.Header().Get("Location") != "" {
+		t.Fatalf("replayed callback = %d", replay.Code)
+	}
+}
+
 func TestCallbackReportsPersistenceAndIdentityFailures(t *testing.T) {
 	service, db, key := persistenceService(t)
 	redisServer := miniredis.RunT(t)

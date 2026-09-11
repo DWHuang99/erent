@@ -1,11 +1,38 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
 import { axiosInstance } from '../src/axios/service.js'
-import { startCodexLogin, completeCodexLogin, parseCallback, getOAuthList, refreshOAuthAccount } from '../src/services/oauth.js'
+import { startCodexLogin, completeCodexLogin, parseCallback, getOAuthList, refreshOAuthAccount, deleteOAuthAccount } from '../src/services/oauth.js'
 
 const adapter = axiosInstance.defaults.adapter
 const authorization = 'https://auth.example.com/authorize?state=state-1&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback'
 const callback = 'http://localhost:1455/auth/callback?code=one-time-code&state=state-1'
+
+test('delete posts only the selected ID with authentication and validates success', async () => {
+  axiosInstance.defaults.adapter = async (config) => {
+    assert.equal(config.method, 'post')
+    assert.equal(config.url, '/oauth/delete')
+    assert.deepEqual(JSON.parse(config.data), { id: 42 })
+    assert.equal(config.skipAuth, undefined)
+    return respond(config, { code: 0, data: null, message: 'success' })
+  }
+  await deleteOAuthAccount(42)
+  for (const body of [{ code: 500, message: 'success' }, { code: 0 }, {}]) {
+    axiosInstance.defaults.adapter = async (config) => respond(config, body)
+    await assert.rejects(deleteOAuthAccount(42), /未确认删除成功/)
+  }
+})
+
+test('delete reports missing accounts, unavailable routes and database failures', async () => {
+  for (const [status, data, message] of [
+    [404, { code: 404, message: 'oauth credential not found' }, /账号不存在/],
+    [404, '404 page not found', /接口不可用/],
+    [500, undefined, /删除授权账号失败/],
+    [401, undefined, /重新登录/],
+  ]) {
+    axiosInstance.defaults.adapter = async () => { throw { response: { status, data } } }
+    await assert.rejects(deleteOAuthAccount(42), message)
+  }
+})
 
 test('refresh posts the selected credential ID with console authentication', async () => {
   axiosInstance.defaults.adapter = async (config) => {
