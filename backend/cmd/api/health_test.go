@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"erent/internal/config"
+	"erent/internal/modules/oauth/oidc"
 	"erent/internal/rpc/upstream"
 	"erent/internal/testdatabase"
 
@@ -68,6 +69,14 @@ func TestRegisterHealthRoutes(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = connection.Close() })
 	instances.upstreamConnection = connection
+	healthServer.SetServingStatus(upstream.UpstreamService_ServiceDesc.ServiceName, healthpb.HealthCheckResponse_NOT_SERVING)
+	disabled := httptest.NewRecorder()
+	router.ServeHTTP(disabled, httptest.NewRequest(http.MethodGet, "/health/ready", nil))
+	if disabled.Code != 200 {
+		t.Fatalf("no providers: readiness=%d", disabled.Code)
+	}
+	instances.oidcAuth = map[string]*oidc.OIDCAuth{"oai": {}}
+
 	for _, test := range []struct {
 		status healthpb.HealthCheckResponse_ServingStatus
 		want   int

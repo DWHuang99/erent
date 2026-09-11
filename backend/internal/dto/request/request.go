@@ -18,3 +18,9 @@ type RegisterRequest struct {
 type OAuthRefreshRequest struct {
 	ID uint64 `json:"id" binding:"required"`
 }
+
+type OAuthPollRequest struct {
+	DeviceAuthID string `json:"device_auth_id" binding:"required"`
+	UserCode     string `json:"user_code"`
+	Interval     uint32 `json:"interval"`
+}

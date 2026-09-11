@@ -79,7 +79,7 @@ func TestSaveTokenPersistsAndIsolatesOwners(t *testing.T) {
 	service, db, key := persistenceService(t)
 	flow := oidc.LoginFlow{Provider: "oai", UserID: 1, Nonce: "nonce"}
 	token := signedToken(t, key, nil)
-	if err := service.SaveToken(t.Context(), token, flow); err != nil {
+	if err := service.SaveToken(t.Context(), token, flow, true); err != nil {
 		t.Fatal(err)
 	}
 	var saved OAuthInfo
@@ -102,7 +102,7 @@ func TestSaveTokenPersistsAndIsolatesOwners(t *testing.T) {
 	token.AccessToken = "replacement-secret"
 	token.RefreshToken = ""
 	token.Expiry = time.Time{}
-	if err := service.SaveToken(t.Context(), token, flow); !errors.Is(err, gorm.ErrDuplicatedKey) {
+	if err := service.SaveToken(t.Context(), token, flow, true); !errors.Is(err, gorm.ErrDuplicatedKey) {
 		t.Fatalf("duplicate insert got %v", err)
 	}
 	var updated OAuthInfo
@@ -113,7 +113,7 @@ func TestSaveTokenPersistsAndIsolatesOwners(t *testing.T) {
 		t.Fatal("duplicate insert overwrote the existing credentials")
 	}
 	flow.UserID = 2
-	if err := service.SaveToken(t.Context(), token, flow); err != nil {
+	if err := service.SaveToken(t.Context(), token, flow, true); err != nil {
 		t.Fatal(err)
 	}
 	var rows []OAuthInfo
@@ -132,7 +132,7 @@ func TestSaveTokenPersistsAndIsolatesOwners(t *testing.T) {
 func TestSaveTokenRejectsInvalidEncryptionKey(t *testing.T) {
 	service, db, key := persistenceService(t)
 	service.encryptionKey = nil
-	if err := service.SaveToken(t.Context(), signedToken(t, key, nil), oidc.LoginFlow{Provider: "oai", UserID: 1, Nonce: "nonce"}); err == nil {
+	if err := service.SaveToken(t.Context(), signedToken(t, key, nil), oidc.LoginFlow{Provider: "oai", UserID: 1, Nonce: "nonce"}, true); err == nil {
 		t.Fatal("invalid encryption key accepted")
 	}
 	var count int64
@@ -156,7 +156,7 @@ func TestSaveTokenRejectsInvalidIdentityAndState(t *testing.T) {
 		{"malformed claims", jwt.MapClaims{"email": 123}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := service.SaveToken(t.Context(), signedToken(t, key, tc.changes), oidc.LoginFlow{Provider: "oai", UserID: 1, Nonce: "nonce"}); !errors.Is(err, ErrInvalidIDToken) {
+			if err := service.SaveToken(t.Context(), signedToken(t, key, tc.changes), oidc.LoginFlow{Provider: "oai", UserID: 1, Nonce: "nonce"}, true); !errors.Is(err, ErrInvalidIDToken) {
 				t.Fatalf("got %v", err)
 			}
 		})
@@ -167,11 +167,11 @@ func TestSaveTokenRejectsInvalidIdentityAndState(t *testing.T) {
 	}
 	flow := oidc.LoginFlow{Provider: "oai", UserID: 1, Nonce: "nonce"}
 	for _, token := range []*oauth2.Token{nil, {AccessToken: "secret"}, signedToken(t, otherKey, nil)} {
-		if err := service.SaveToken(t.Context(), token, flow); !errors.Is(err, ErrInvalidIDToken) {
+		if err := service.SaveToken(t.Context(), token, flow, true); !errors.Is(err, ErrInvalidIDToken) {
 			t.Fatalf("invalid token got %v", err)
 		}
 	}
-	if err := service.SaveToken(t.Context(), signedToken(t, key, nil), oidc.LoginFlow{Provider: "oai", Nonce: "nonce"}); !errors.Is(err, ErrInvalidOAuthState) {
+	if err := service.SaveToken(t.Context(), signedToken(t, key, nil), oidc.LoginFlow{Provider: "oai", Nonce: "nonce"}, true); !errors.Is(err, ErrInvalidOAuthState) {
 		t.Fatalf("missing state user ID got %v", err)
 	}
 	var count int64

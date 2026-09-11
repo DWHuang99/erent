@@ -33,6 +33,48 @@ export async function startCodexLogin() {
   return url.href
 }
 
+function deviceFailure(error) {
+  if (error?.code === 'ERR_CANCELED') return error
+  if (error?.response?.status === 408) return new Error('设备授权已取消，请重新开始授权。')
+  if (!error?.response || error.response.status === 504) {
+    return new Error('设备授权等待中断或超时，请先查看已授权账号；若未保存，请重新开始授权。')
+  }
+  return failure(error)
+}
+
+export async function startCodexDeviceLogin(signal) {
+  let body
+  try {
+    body = await request.post({ url: '/oauth/logindevice', params: { provider: 'oai' }, signal })
+  } catch (error) {
+    throw deviceFailure(error)
+  }
+  const data = body?.data
+  let url
+  try { url = new URL(data?.verification_url) } catch { throw new Error('服务端未返回有效的设备授权链接。') }
+  if (body?.code !== 0 || url.protocol !== 'https:' || url.username || url.password ||
+      typeof data?.device_auth_id !== 'string' || !data.device_auth_id.trim() ||
+      typeof data?.user_code !== 'string' || !data.user_code.trim()) {
+    throw new Error('服务端返回的设备授权信息无效，请重新开始授权。')
+  }
+  return { ...data, verification_url: url.href }
+}
+
+export async function completeCodexDeviceLogin(deviceAuthId, signal) {
+  let body
+  try {
+    body = await request.post({
+      url: '/oauth/callbackdevice', params: { provider: 'oai' },
+      data: { device_auth_id: deviceAuthId }, signal,
+    })
+  } catch (error) {
+    throw deviceFailure(error)
+  }
+  if (body?.code !== 0 || body?.message !== 'oauth credentials saved') {
+    throw new Error('服务端未确认凭证已保存，请先查看已授权账号；若未保存，请重新开始授权。')
+  }
+}
+
 export function parseCallback(value, authorizationUrl) {
   let callback
   try { callback = new URL(value.trim()) } catch { throw new Error('请粘贴浏览器地址栏中的完整回调 URL。') }

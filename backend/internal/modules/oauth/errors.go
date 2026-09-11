@@ -7,6 +7,10 @@ import (
 )
 
 var (
+	ErrInvalidDeviceFlow   = upstreamdirectory.ErrInvalidDeviceFlow
+	ErrDeviceFlowRejected  = upstreamdirectory.ErrDeviceFlowRejected
+	ErrDeviceFlowFailed    = upstreamdirectory.ErrDeviceFlowFailed
+	ErrDeviceFlowTimeout   = upstreamdirectory.ErrDeviceFlowTimeout
 	ErrOAuthNotFound       = errors.New("oauth credential not found")
 	ErrInvalidRefresh      = upstreamdirectory.ErrInvalidRefresh
 	ErrRefreshRejected     = upstreamdirectory.ErrRefreshRejected

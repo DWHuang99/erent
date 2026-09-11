@@ -6,6 +6,9 @@ option go_package = "erent/internal/rpc/upstream";
 import "google/protobuf/timestamp.proto";
 
 service UpstreamService {
+   rpc GetDeviceFlowCode(DeviceFlowRequest) returns (DeviceFlowResponse);
+   // Waits for approval, not final OAuth tokens. Bounded to 15 minutes and caller cancellation.
+   rpc PollDeviceFlow(PollDeviceFlowRequest) returns (DeviceAuthorizationResponse);
    rpc ExchangeCode(ExchangeCodeRequest) returns (TokenResponse);
    // Refreshes provider credentials; callers coordinate refresh and persist the result.
    rpc RefreshToken(RefreshTokenRequest) returns (TokenResponse);
@@ -20,6 +23,8 @@ message ExchangeCodeRequest{
     // PKCE 校验用，对应 oauth2.VerifierOption(flow.Verifier)
     string code_verifier = 2;
     string provider = 3;
+    // Empty preserves the existing browser flow. Set by the API, not browser input.
+    string flow_type = 4;
 }
 
 message RefreshTokenRequest{
@@ -38,6 +43,31 @@ message TokenResponse{
 message ProviderRequest{
     // Must match a configured issuer, not an arbitrary URL to fetch.
     string issuer = 1;
+}
+
+message DeviceFlowRequest {
+    string provider = 1;
+}
+
+message DeviceFlowResponse {
+    string device_auth_id = 1;
+    string user_code = 2;
+    uint32 interval_seconds = 3;
+    string verification_url = 4;
+}
+
+message PollDeviceFlowRequest {
+    string provider = 1;
+    string device_auth_id = 2;
+    string user_code = 3;
+    // Positive interval returned by GetDeviceFlowCode; maximum 900 seconds.
+    uint32 interval_seconds = 4;
+}
+
+// Internal credentials: must not be returned to the browser.
+message DeviceAuthorizationResponse {
+    string authorization_code = 1;
+    string code_verifier = 2;
 }
 
 message ProviderResponse{

@@ -1,12 +1,14 @@
 package upstreamserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,7 +47,18 @@ func (s *server) ExchangeCode(ctx context.Context, request *upstream.ExchangeCod
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
-	token, err := auth.OauthConfig.Exchange(ctx, request.Code, oauth2.VerifierOption(request.CodeVerifier))
+	cfg := *auth.OauthConfig
+	switch request.FlowType {
+	case "", "browser":
+	case "device":
+		if request.Provider != "oai" {
+			return nil, status.Error(codes.InvalidArgument, "unsupported device provider")
+		}
+		cfg.RedirectURL = "https://auth.openai.com/deviceauth/callback"
+	default:
+		return nil, status.Error(codes.InvalidArgument, "invalid flow type")
+	}
+	token, err := cfg.Exchange(ctx, request.Code, oauth2.VerifierOption(request.CodeVerifier))
 	if err != nil {
 		code := exchangeErrorCode(ctx, err)
 		// Provider response bodies can contain credentials. Log only classified metadata.
@@ -261,4 +274,123 @@ func Serve(ctx context.Context, cfg config.UpstreamServerConfig, oidcAuth map[st
 		return nil
 	}
 	return err
+}
+
+const LoginDeviceFlowEndpoint = "https://auth.openai.com/api/accounts/deviceauth/usercode"
+const PostTokenEndpoint = "https://auth.openai.com/api/accounts/deviceauth/token"
+
+var httpClient = &http.Client{Timeout: 15 * time.Second}
+
+func (s *server) GetDeviceFlowCode(ctx context.Context, request *upstream.DeviceFlowRequest) (*upstream.DeviceFlowResponse, error) {
+	if request == nil || request.Provider == "" {
+		return nil, status.Error(codes.InvalidArgument, "provider is required")
+	}
+	auth := s.oidcAuth[request.Provider]
+	if request.Provider != "oai" || auth == nil || auth.OauthConfig == nil || auth.OauthConfig.ClientID == "" {
+		return nil, status.Error(codes.FailedPrecondition, "device provider is not configured")
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	body, _ := json.Marshal(map[string]string{"client_id": auth.OauthConfig.ClientID})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, LoginDeviceFlowEndpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, status.Error(codes.Internal, "invalid device request")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, status.Error(exchangeErrorCode(ctx, err), "device authorization request failed")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, deviceHTTPError(resp.StatusCode)
+	}
+	var result struct {
+		DeviceAuthID string `json:"device_auth_id"`
+		UserCode     string `json:"user_code"`
+		Interval     string `json:"interval"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, status.Error(codes.Internal, "invalid device authorization response")
+	}
+	interval, err := strconv.ParseUint(result.Interval, 10, 32)
+	if err != nil || interval == 0 || interval > 900 || result.DeviceAuthID == "" || result.UserCode == "" {
+		return nil, status.Error(codes.Internal, "invalid device authorization response")
+	}
+	return &upstream.DeviceFlowResponse{DeviceAuthId: result.DeviceAuthID, UserCode: result.UserCode, IntervalSeconds: uint32(interval), VerificationUrl: "https://auth.openai.com/codex/device"}, nil
+}
+
+// A nil result with no error means approval is still pending.
+func postToken(request *http.Request) (*upstream.DeviceAuthorizationResponse, error) {
+	resp, err := httpClient.Do(request)
+	if err != nil {
+		return nil, status.Error(exchangeErrorCode(request.Context(), err), "device authorization request failed")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, deviceHTTPError(resp.StatusCode)
+	}
+	var result struct {
+		Code         string `json:"authorization_code"`
+		CodeVerifier string `json:"code_verifier"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result.Code == "" || result.CodeVerifier == "" {
+		return nil, status.Error(codes.Internal, "invalid device authorization response")
+	}
+	return &upstream.DeviceAuthorizationResponse{AuthorizationCode: result.Code, CodeVerifier: result.CodeVerifier}, nil
+}
+
+func (s *server) PollDeviceFlow(ctx context.Context, request *upstream.PollDeviceFlowRequest) (*upstream.DeviceAuthorizationResponse, error) {
+	if request == nil || request.Provider == "" || request.DeviceAuthId == "" || request.UserCode == "" || request.IntervalSeconds == 0 || request.IntervalSeconds > 900 {
+		return nil, status.Error(codes.InvalidArgument, "device auth ID, user code and valid interval are required")
+	}
+	auth := s.oidcAuth[request.Provider]
+	if request.Provider != "oai" || auth == nil || auth.OauthConfig == nil {
+		return nil, status.Error(codes.FailedPrecondition, "device provider is not configured")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	defer cancel()
+	body, _ := json.Marshal(map[string]string{"device_auth_id": request.DeviceAuthId, "user_code": request.UserCode})
+	for {
+		requestCtx, requestCancel := context.WithTimeout(ctx, s.timeout)
+		req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, PostTokenEndpoint, bytes.NewReader(body))
+		if err != nil {
+			requestCancel()
+			return nil, status.Error(codes.Internal, "invalid device request")
+		}
+		req.Header.Set("Content-Type", "application/json")
+		result, err := postToken(req)
+		requestCancel()
+		if err != nil {
+			return nil, err
+		}
+		if result != nil {
+			return result, nil
+		}
+
+		timer := time.NewTimer(time.Duration(request.IntervalSeconds) * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, status.FromContextError(ctx.Err()).Err()
+		case <-timer.C:
+		}
+	}
+}
+
+// Preserve the directory's existing error contract without exposing response bodies.
+func deviceHTTPError(httpStatus int) error {
+	code := codes.Internal
+	switch {
+	case httpStatus == http.StatusForbidden || httpStatus == http.StatusNotFound:
+		code = codes.FailedPrecondition
+	case httpStatus == http.StatusBadRequest || httpStatus == http.StatusUnauthorized:
+		code = codes.Unauthenticated
+	case httpStatus == http.StatusTooManyRequests || httpStatus >= 500:
+		code = codes.Unavailable
+	}
+	return status.Error(code, "device authorization rejected")
 }

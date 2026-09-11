@@ -93,6 +93,8 @@ POST /oauth/delete            # JWT，JSON {id}
 
 directory/server 使用有界 context，传递 access token、refresh token、ID token、token type 和可选 expiry，隔离上游错误详情。错误合同、mTLS 与无重试约定见 `docs/upstream.md`。当前没有后台定时刷新任务，本地 1455 回调由浏览器所在电脑的 Nginx 接收服务通过 302 转交控制台 `/oauth/callback`。
 
+设备授权基础调用链为 `OauthService.GetDeviceFlowCode/Poll → Directory.GetDeviceFlowCode/PollDeviceFlow → upstream gRPC → OpenAI deviceauth`。upstream 使用固定 OpenAI 设备授权端点和已配置 OAI client ID 构造请求，API 不直连设备授权端点。申请返回设备 ID、用户码、验证链接和正整数秒间隔；轮询仅在上游返回 403/404 时按该间隔等待，成功返回内部授权码和 verifier。整体等待最多 15 分钟并继承调用方取消/更短期限，单次 HTTP 请求使用 upstream 请求超时；directory 的普通 RPC 超时不截断这段人工确认等待。目前仅提供 Service 级能力，尚未接入设备授权 HTTP handler、用户会话绑定、设备专用 token 兑换或保存流程；调用方后续必须按申请时记录的过期时间限制等待，授权码与 verifier 不得发送给浏览器。
+
 ## 4. 登录调用链
 
 ```mermaid

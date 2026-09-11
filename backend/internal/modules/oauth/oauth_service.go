@@ -1,12 +1,10 @@
 package oauth
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -120,14 +118,14 @@ func (o *OauthService) AuthCodeURL(provider, state, verifier, nonce string) (str
 }
 
 // Exchange 使用授权码兑换 OAuth2 Token。
-func (o *OauthService) Exchange(ctx context.Context, code, verifier, provider string) (*oauth2.Token, error) {
+func (o *OauthService) Exchange(ctx context.Context, code, verifier, provider, flowType string) (*oauth2.Token, error) {
 	if _, err := o.authFor(provider); err != nil {
 		return nil, err
 	}
 	if o.directory == nil {
 		return nil, ErrUpstreamUnavailable
 	}
-	return o.directory.Exchange(ctx, code, verifier, provider)
+	return o.directory.Exchange(ctx, code, verifier, provider, flowType)
 }
 
 // verifyIDToken delegates ID token verification to upstream.
@@ -230,10 +228,10 @@ func (o *OauthService) refreshTokenCredentials(ctx context.Context, model *OAuth
 }
 
 // SaveToken verifies provider identity before persisting credentials for the state owner.
-func (o *OauthService) SaveToken(ctx context.Context, token *oauth2.Token, flow oidc.LoginFlow) error {
+func (o *OauthService) SaveToken(ctx context.Context, token *oauth2.Token, flow oidc.LoginFlow, isbrowser bool) error {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	if flow.UserID == 0 || flow.Nonce == "" || flow.Provider == "" {
+	if flow.UserID == 0 || (flow.Nonce == "" && isbrowser) || flow.Provider == "" {
 		return ErrInvalidOAuthState
 	}
 	if token == nil || strings.TrimSpace(token.AccessToken) == "" || (!token.Expiry.IsZero() && !token.Expiry.After(time.Now())) {
@@ -247,7 +245,7 @@ func (o *OauthService) SaveToken(ctx context.Context, token *oauth2.Token, flow 
 	if errors.Is(err, ErrUpstreamUnavailable) || errors.Is(err, ErrProviderUnavailable) {
 		return err
 	}
-	if err != nil || idToken.Nonce != flow.Nonce {
+	if err != nil || (idToken.Nonce != flow.Nonce && isbrowser) {
 		return ErrInvalidIDToken
 	}
 	var claims IDTokenClaims
@@ -307,32 +305,82 @@ func (o *OauthService) toOauthInfo(id, userid uint64, accountid, email, accessto
 	return model, nil
 }
 
-var httpClient = &http.Client{Timeout: 15 * time.Second}
-
-const LoginDeviceFlowEndpoint = "https://auth.openai.com/api/accounts/deviceauth/usercode"
-const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
-
-func (o *OauthService) GetDeviceFlowCode(ctx context.Context) (*response.OaiDeviceflowResponse, error) {
-	body, _ := json.Marshal(map[string]interface{}{"CLIENT_ID": CLIENT_ID})
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, LoginDeviceFlowEndpoint, bytes.NewReader(body))
+// GetDeviceFlowCode returns device login instructions for the handler layer.
+// The handler must bind the device ID and interval to the authenticated local user.
+func (o *OauthService) GetDeviceFlowCode(ctx context.Context, provider string) (*response.OaiDeviceflowResponse, error) {
+	if _, err := o.authFor(provider); err != nil {
+		return nil, err
+	}
+	if o.directory == nil {
+		return nil, ErrUpstreamUnavailable
+	}
+	result, err := o.directory.GetDeviceFlowCode(ctx, provider)
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Content-Type", "application/json")
-	resp, err := httpClient.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-	var deviceflowResponse = &response.OaiDeviceflowResponse{}
-	if err := json.NewDecoder(resp.Body).Decode(deviceflowResponse); err != nil {
-		return nil, err
-	}
-	// Handle the deviceflowResponse as needed
-	return deviceflowResponse, nil
+	return &response.OaiDeviceflowResponse{DeviceAuthID: result.DeviceAuthId, UserCode: result.UserCode, Interval: result.IntervalSeconds, VerificationURL: result.VerificationUrl}, nil
 }
 
-// func (o *OauthService) Post
+// Poll returns internal exchange credentials, not tokens or a browser response.
+// Supply the interval from GetDeviceFlowCode and a context bounded by the stored flow expiry.
+func (o *OauthService) Poll(ctx context.Context, authID, userCode string, intervalSeconds uint32, provider string) (*response.OaiPostTokenResponse, error) {
+	if _, err := o.authFor(provider); err != nil {
+		return nil, err
+	}
+	if o.directory == nil {
+		return nil, ErrUpstreamUnavailable
+	}
+	result, err := o.directory.PollDeviceFlow(ctx, provider, authID, userCode, intervalSeconds)
+	if err != nil {
+		return nil, err
+	}
+	return &response.OaiPostTokenResponse{Code: result.AuthorizationCode, CodeVerifier: result.CodeVerifier}, nil
+}
+
+// Device flows are consumed once, only by the user who started them.
+type deviceLoginFlow struct {
+	Provider     string
+	UserID       uint64
+	DeviceAuthID string
+	UserCode     string
+	Interval     uint32
+	ExpiresAt    time.Time
+}
+
+func (o *OauthService) storeDeviceFlow(ctx context.Context, flow deviceLoginFlow) error {
+	if o.redisClient == nil {
+		return ErrUpstreamUnavailable
+	}
+	data, err := json.Marshal(flow)
+	if err != nil {
+		return err
+	}
+	return o.redisClient.Set(ctx, "oidc:device:"+flow.DeviceAuthID, data, time.Until(flow.ExpiresAt)).Err()
+}
+
+func (o *OauthService) popDeviceFlow(ctx context.Context, authID, provider string, ownerID uint64) (deviceLoginFlow, error) {
+	var flow deviceLoginFlow
+	if o.redisClient == nil {
+		return flow, ErrUpstreamUnavailable
+	}
+	key := "oidc:device:" + authID
+	raw, err := o.redisClient.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return flow, ErrInvalidOAuthState
+	}
+	if err != nil {
+		return flow, err
+	}
+	if json.Unmarshal([]byte(raw), &flow) != nil || flow.UserID != ownerID || flow.Provider != provider || flow.DeviceAuthID != authID || !flow.ExpiresAt.After(time.Now()) {
+		return deviceLoginFlow{}, ErrInvalidOAuthState
+	}
+	// Compare-and-delete avoids concurrent completion and does not consume another user's flow.
+	consumed, err := o.redisClient.Eval(ctx, `if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end`, []string{key}, raw).Int()
+	if err != nil {
+		return deviceLoginFlow{}, err
+	}
+	if consumed != 1 {
+		return deviceLoginFlow{}, ErrInvalidOAuthState
+	}
+	return flow, nil
+}

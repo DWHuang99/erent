@@ -19,16 +19,21 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	UpstreamService_ExchangeCode_FullMethodName = "/upstream.UpstreamService/ExchangeCode"
-	UpstreamService_RefreshToken_FullMethodName = "/upstream.UpstreamService/RefreshToken"
-	UpstreamService_GetProvider_FullMethodName  = "/upstream.UpstreamService/GetProvider"
-	UpstreamService_Verifier_FullMethodName     = "/upstream.UpstreamService/Verifier"
+	UpstreamService_GetDeviceFlowCode_FullMethodName = "/upstream.UpstreamService/GetDeviceFlowCode"
+	UpstreamService_PollDeviceFlow_FullMethodName    = "/upstream.UpstreamService/PollDeviceFlow"
+	UpstreamService_ExchangeCode_FullMethodName      = "/upstream.UpstreamService/ExchangeCode"
+	UpstreamService_RefreshToken_FullMethodName      = "/upstream.UpstreamService/RefreshToken"
+	UpstreamService_GetProvider_FullMethodName       = "/upstream.UpstreamService/GetProvider"
+	UpstreamService_Verifier_FullMethodName          = "/upstream.UpstreamService/Verifier"
 )
 
 // UpstreamServiceClient is the client API for UpstreamService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type UpstreamServiceClient interface {
+	GetDeviceFlowCode(ctx context.Context, in *DeviceFlowRequest, opts ...grpc.CallOption) (*DeviceFlowResponse, error)
+	// Waits for approval, not final OAuth tokens. Bounded to 15 minutes and caller cancellation.
+	PollDeviceFlow(ctx context.Context, in *PollDeviceFlowRequest, opts ...grpc.CallOption) (*DeviceAuthorizationResponse, error)
 	ExchangeCode(ctx context.Context, in *ExchangeCodeRequest, opts ...grpc.CallOption) (*TokenResponse, error)
 	// Refreshes provider credentials; callers coordinate refresh and persist the result.
 	RefreshToken(ctx context.Context, in *RefreshTokenRequest, opts ...grpc.CallOption) (*TokenResponse, error)
@@ -44,6 +49,26 @@ type upstreamServiceClient struct {
 
 func NewUpstreamServiceClient(cc grpc.ClientConnInterface) UpstreamServiceClient {
 	return &upstreamServiceClient{cc}
+}
+
+func (c *upstreamServiceClient) GetDeviceFlowCode(ctx context.Context, in *DeviceFlowRequest, opts ...grpc.CallOption) (*DeviceFlowResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeviceFlowResponse)
+	err := c.cc.Invoke(ctx, UpstreamService_GetDeviceFlowCode_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *upstreamServiceClient) PollDeviceFlow(ctx context.Context, in *PollDeviceFlowRequest, opts ...grpc.CallOption) (*DeviceAuthorizationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeviceAuthorizationResponse)
+	err := c.cc.Invoke(ctx, UpstreamService_PollDeviceFlow_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *upstreamServiceClient) ExchangeCode(ctx context.Context, in *ExchangeCodeRequest, opts ...grpc.CallOption) (*TokenResponse, error) {
@@ -90,6 +115,9 @@ func (c *upstreamServiceClient) Verifier(ctx context.Context, in *VerifyRequest,
 // All implementations must embed UnimplementedUpstreamServiceServer
 // for forward compatibility.
 type UpstreamServiceServer interface {
+	GetDeviceFlowCode(context.Context, *DeviceFlowRequest) (*DeviceFlowResponse, error)
+	// Waits for approval, not final OAuth tokens. Bounded to 15 minutes and caller cancellation.
+	PollDeviceFlow(context.Context, *PollDeviceFlowRequest) (*DeviceAuthorizationResponse, error)
 	ExchangeCode(context.Context, *ExchangeCodeRequest) (*TokenResponse, error)
 	// Refreshes provider credentials; callers coordinate refresh and persist the result.
 	RefreshToken(context.Context, *RefreshTokenRequest) (*TokenResponse, error)
@@ -107,6 +135,12 @@ type UpstreamServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedUpstreamServiceServer struct{}
 
+func (UnimplementedUpstreamServiceServer) GetDeviceFlowCode(context.Context, *DeviceFlowRequest) (*DeviceFlowResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetDeviceFlowCode not implemented")
+}
+func (UnimplementedUpstreamServiceServer) PollDeviceFlow(context.Context, *PollDeviceFlowRequest) (*DeviceAuthorizationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PollDeviceFlow not implemented")
+}
 func (UnimplementedUpstreamServiceServer) ExchangeCode(context.Context, *ExchangeCodeRequest) (*TokenResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExchangeCode not implemented")
 }
@@ -138,6 +172,42 @@ func RegisterUpstreamServiceServer(s grpc.ServiceRegistrar, srv UpstreamServiceS
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&UpstreamService_ServiceDesc, srv)
+}
+
+func _UpstreamService_GetDeviceFlowCode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeviceFlowRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UpstreamServiceServer).GetDeviceFlowCode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UpstreamService_GetDeviceFlowCode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UpstreamServiceServer).GetDeviceFlowCode(ctx, req.(*DeviceFlowRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UpstreamService_PollDeviceFlow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PollDeviceFlowRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UpstreamServiceServer).PollDeviceFlow(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UpstreamService_PollDeviceFlow_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UpstreamServiceServer).PollDeviceFlow(ctx, req.(*PollDeviceFlowRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _UpstreamService_ExchangeCode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -219,6 +289,14 @@ var UpstreamService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "upstream.UpstreamService",
 	HandlerType: (*UpstreamServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GetDeviceFlowCode",
+			Handler:    _UpstreamService_GetDeviceFlowCode_Handler,
+		},
+		{
+			MethodName: "PollDeviceFlow",
+			Handler:    _UpstreamService_PollDeviceFlow_Handler,
+		},
 		{
 			MethodName: "ExchangeCode",
 			Handler:    _UpstreamService_ExchangeCode_Handler,
