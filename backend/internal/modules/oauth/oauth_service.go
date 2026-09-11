@@ -1,10 +1,12 @@
 package oauth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -18,6 +20,8 @@ import (
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/oauth2"
 	"gorm.io/gorm"
+
+	"erent/internal/dto/response"
 )
 
 var ErrInvalidOAuthState = errors.New("invalid oauth state")
@@ -302,3 +306,33 @@ func (o *OauthService) toOauthInfo(id, userid uint64, accountid, email, accessto
 	}
 	return model, nil
 }
+
+var httpClient = &http.Client{Timeout: 15 * time.Second}
+
+const LoginDeviceFlowEndpoint = "https://auth.openai.com/api/accounts/deviceauth/usercode"
+const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+
+func (o *OauthService) GetDeviceFlowCode(ctx context.Context) (*response.OaiDeviceflowResponse, error) {
+	body, _ := json.Marshal(map[string]interface{}{"CLIENT_ID": CLIENT_ID})
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, LoginDeviceFlowEndpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+	var deviceflowResponse = &response.OaiDeviceflowResponse{}
+	if err := json.NewDecoder(resp.Body).Decode(deviceflowResponse); err != nil {
+		return nil, err
+	}
+	// Handle the deviceflowResponse as needed
+	return deviceflowResponse, nil
+}
+
+// func (o *OauthService) Post
