@@ -54,7 +54,7 @@ export async function completeCodexLogin(value, authorizationUrl) {
   const params = parseCallback(value, authorizationUrl)
   let body
   try {
-    body = await request.get({ url: '/oauth/callback', params, skipAuth: true, skipAuthRefresh: true })
+    body = await request.get({ url: '/oauth/callback', params, headers: { Accept: 'application/json' }, skipAuth: true, skipAuthRefresh: true })
   } catch (error) {
     throw failure(error)
   }
@@ -73,6 +73,23 @@ export async function getOAuthList() {
     throw new Error('服务端未返回有效的授权账号列表。')
   }
   return body.data.oauthlist
+}
+
+export async function deleteOAuthAccount(id) {
+  let body
+  try {
+    body = await request.post({ url: '/oauth/delete', data: { id } })
+  } catch (error) {
+    if (error?.response?.status === 401) throw failure(error)
+    if (error?.response?.status === 404) {
+      const missing = error.response.data?.message === 'oauth credential not found'
+      throw new Error(missing ? '授权账号不存在，请刷新账号列表。' : '服务端删除接口不可用，请更新或重启后端服务。')
+    }
+    throw new Error('删除授权账号失败，请稍后重试。')
+  }
+  if (body?.code !== 0 || body?.message !== 'success') {
+    throw new Error('服务端未确认删除成功，请刷新列表检查账号状态。')
+  }
 }
 
 export async function refreshOAuthAccount(id) {

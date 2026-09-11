@@ -76,13 +76,15 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 compose=(docker compose --env-file "${env_file}" -f "${compose_file}")
+# This script opens Vite, so callbacks must return to the same console origin.
+export OAUTH_CONSOLE_ORIGIN="http://127.0.0.1:5173"
 
 if [[ "${mode}" == "debug" ]]; then
   debug_compose=("${compose[@]}" -f "${debug_compose_file}")
 
   echo "Preparing backend infrastructure for IDE debugging..."
   "${compose[@]}" stop web gateway api upstream
-  "${debug_compose[@]}" up -d postgres redis
+  "${debug_compose[@]}" up -d postgres redis oauth-callback
   "${debug_compose[@]}" run --rm migrate
 
   echo "Backend infrastructure is ready: PostgreSQL 127.0.0.1:5432, Redis 127.0.0.1:6379"

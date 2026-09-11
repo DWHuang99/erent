@@ -8,8 +8,6 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-var ErrNotFound = errors.New("user not found")
-
 type Repository struct {
 	database *gorm.DB
 }
@@ -62,13 +60,13 @@ func (r *Repository) getUserOauth(ctx context.Context, userid uint64) ([]OAuthLi
 	return items, nil
 }
 
-func (r *Repository) deleteUserOauth(ctx context.Context, id int64) error {
-	err := r.database.WithContext(ctx).Delete(&OAuthInfo{}, id).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return ErrNotFound
+func (r *Repository) deleteUserOauth(ctx context.Context, id uint64, ownerID uint64) error {
+	result := r.database.WithContext(ctx).Where("id = ? AND user_id = ?", id, ownerID).Delete(&OAuthInfo{})
+	if result.Error != nil {
+		return result.Error
 	}
-	if err != nil {
-		return err
+	if result.RowsAffected == 0 {
+		return ErrOAuthNotFound
 	}
 	return nil
 }

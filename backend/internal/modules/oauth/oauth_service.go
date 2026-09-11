@@ -273,8 +273,8 @@ func (o *OauthService) getUserOauth(ctx context.Context, userid uint64) ([]OAuth
 	return o.repository.getUserOauth(ctx, userid)
 }
 
-func (o *OauthService) deleteUserOauth(ctx context.Context, id int64) error {
-	return o.repository.deleteUserOauth(ctx, id)
+func (o *OauthService) deleteUserOauth(ctx context.Context, id uint64, userid uint64) error {
+	return o.repository.deleteUserOauth(ctx, id, userid)
 }
 
 func (o *OauthService) toOauthInfo(id, userid uint64, accountid, email, accesstoken, refreshtoken, idtoken string, expired *time.Time) (OAuthInfo, error) {

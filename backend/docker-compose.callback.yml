@@ -1,0 +1,15 @@
+name: erent-local-oauth-callback
+services:
+  oauth-callback:
+    image: nginx:1.28-alpine
+    ports:
+      - "127.0.0.1:1455:1455"
+      - "[::1]:1455:1455"
+    environment:
+      OAUTH_CONSOLE_ORIGIN: ${OAUTH_CONSOLE_ORIGIN:-http://127.0.0.1:5173}
+      NGINX_ENVSUBST_FILTER: ^OAUTH_CONSOLE_ORIGIN$
+    volumes:
+      - ./nginx/oauth-callback.conf.template:/etc/nginx/templates/default.conf.template:ro
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
