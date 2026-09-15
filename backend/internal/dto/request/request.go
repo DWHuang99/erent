@@ -1,6 +1,8 @@
 // Package request contains HTTP request DTOs.
 package request
 
+import "encoding/json"
+
 type LoginRequest struct {
 	Username string `json:"username" binding:"required,min=3,max=50"`
 	Password string `json:"password" binding:"required,min=8,max=72"`
@@ -23,4 +25,18 @@ type OAuthPollRequest struct {
 	DeviceAuthID string `json:"device_auth_id" binding:"required"`
 	UserCode     string `json:"user_code"`
 	Interval     uint32 `json:"interval"`
+}
+
+type ChatRequest struct {
+	Model  string `json:"model"`
+	Stream bool   `json:"stream"`
+}
+
+type CreatApikeyRequest struct {
+	OAuthInfo []uint64 `json:"oauth_info" binding:"required,min=1"`
+}
+
+type UpdateApikeyRequest struct {
+	Disabled  *bool           `json:"disabled"`
+	ExpiresAt json.RawMessage `json:"expires_at"`
 }

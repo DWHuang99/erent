@@ -25,6 +25,8 @@ const (
 	UpstreamService_RefreshToken_FullMethodName      = "/upstream.UpstreamService/RefreshToken"
 	UpstreamService_GetProvider_FullMethodName       = "/upstream.UpstreamService/GetProvider"
 	UpstreamService_Verifier_FullMethodName          = "/upstream.UpstreamService/Verifier"
+	UpstreamService_ChatStream_FullMethodName        = "/upstream.UpstreamService/ChatStream"
+	UpstreamService_ChatNonStream_FullMethodName     = "/upstream.UpstreamService/ChatNonStream"
 )
 
 // UpstreamServiceClient is the client API for UpstreamService service.
@@ -41,6 +43,8 @@ type UpstreamServiceClient interface {
 	GetProvider(ctx context.Context, in *ProviderRequest, opts ...grpc.CallOption) (*ProviderResponse, error)
 	// Returns verified claims; verification failures use a non-OK gRPC status.
 	Verifier(ctx context.Context, in *VerifyRequest, opts ...grpc.CallOption) (*VerifyResponse, error)
+	ChatStream(ctx context.Context, in *ChatRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ChatResponse], error)
+	ChatNonStream(ctx context.Context, in *ChatRequest, opts ...grpc.CallOption) (*ChatResponse, error)
 }
 
 type upstreamServiceClient struct {
@@ -111,6 +115,35 @@ func (c *upstreamServiceClient) Verifier(ctx context.Context, in *VerifyRequest,
 	return out, nil
 }
 
+func (c *upstreamServiceClient) ChatStream(ctx context.Context, in *ChatRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ChatResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &UpstreamService_ServiceDesc.Streams[0], UpstreamService_ChatStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ChatRequest, ChatResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type UpstreamService_ChatStreamClient = grpc.ServerStreamingClient[ChatResponse]
+
+func (c *upstreamServiceClient) ChatNonStream(ctx context.Context, in *ChatRequest, opts ...grpc.CallOption) (*ChatResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ChatResponse)
+	err := c.cc.Invoke(ctx, UpstreamService_ChatNonStream_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // UpstreamServiceServer is the server API for UpstreamService service.
 // All implementations must embed UnimplementedUpstreamServiceServer
 // for forward compatibility.
@@ -125,6 +158,8 @@ type UpstreamServiceServer interface {
 	GetProvider(context.Context, *ProviderRequest) (*ProviderResponse, error)
 	// Returns verified claims; verification failures use a non-OK gRPC status.
 	Verifier(context.Context, *VerifyRequest) (*VerifyResponse, error)
+	ChatStream(*ChatRequest, grpc.ServerStreamingServer[ChatResponse]) error
+	ChatNonStream(context.Context, *ChatRequest) (*ChatResponse, error)
 	mustEmbedUnimplementedUpstreamServiceServer()
 }
 
@@ -152,6 +187,12 @@ func (UnimplementedUpstreamServiceServer) GetProvider(context.Context, *Provider
 }
 func (UnimplementedUpstreamServiceServer) Verifier(context.Context, *VerifyRequest) (*VerifyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Verifier not implemented")
+}
+func (UnimplementedUpstreamServiceServer) ChatStream(*ChatRequest, grpc.ServerStreamingServer[ChatResponse]) error {
+	return status.Error(codes.Unimplemented, "method ChatStream not implemented")
+}
+func (UnimplementedUpstreamServiceServer) ChatNonStream(context.Context, *ChatRequest) (*ChatResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ChatNonStream not implemented")
 }
 func (UnimplementedUpstreamServiceServer) mustEmbedUnimplementedUpstreamServiceServer() {}
 func (UnimplementedUpstreamServiceServer) testEmbeddedByValue()                         {}
@@ -282,6 +323,35 @@ func _UpstreamService_Verifier_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UpstreamService_ChatStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ChatRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(UpstreamServiceServer).ChatStream(m, &grpc.GenericServerStream[ChatRequest, ChatResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type UpstreamService_ChatStreamServer = grpc.ServerStreamingServer[ChatResponse]
+
+func _UpstreamService_ChatNonStream_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ChatRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UpstreamServiceServer).ChatNonStream(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UpstreamService_ChatNonStream_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UpstreamServiceServer).ChatNonStream(ctx, req.(*ChatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // UpstreamService_ServiceDesc is the grpc.ServiceDesc for UpstreamService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -313,7 +383,17 @@ var UpstreamService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "Verifier",
 			Handler:    _UpstreamService_Verifier_Handler,
 		},
+		{
+			MethodName: "ChatNonStream",
+			Handler:    _UpstreamService_ChatNonStream_Handler,
+		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "ChatStream",
+			Handler:       _UpstreamService_ChatStream_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "proto/upstream.proto",
 }
