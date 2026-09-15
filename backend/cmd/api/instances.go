@@ -15,6 +15,7 @@ import (
 	casbinrbac "erent/internal/middleware/casbin"
 	jwtservice "erent/internal/middleware/jwt"
 	rdb "erent/internal/middleware/redis"
+	"erent/internal/modules/apikey"
 	"erent/internal/modules/oauth"
 	"erent/internal/modules/oauth/oidc"
 	"erent/internal/modules/oauth/openai"
@@ -32,6 +33,7 @@ type applicationInstances struct {
 	redisClient        *redis.Client
 	userRepository     *user.Repository
 	oauthRepository    *oauth.Repository
+	apikeyRepository   *apikey.ApikeyRepository
 	casbinEnforcer     *casbin.SyncedEnforcer
 	jwtManager         *jwtservice.JWTManager
 	oidcAuth           map[string]*oidc.OIDCAuth
@@ -74,6 +76,9 @@ func newApplicationInstances(configuration apiConfiguration) (_ *applicationInst
 	instances.redisClient = redisClient
 	instances.userRepository = user.NewRepository(database)
 	instances.oauthRepository = oauth.NewRepository(database)
+	instances.apikeyRepository = apikey.NewRepository(database)
+	apikey.ApikeycheckInject(instances.apikeyRepository)
+	apikey.CredentialInject(configuration.oauthEncryptionKey)
 
 	if err := createBootstrapUser(context.Background(), configuration.runtime, instances.userRepository); err != nil {
 		return nil, fmt.Errorf("create bootstrap user: %w", err)
