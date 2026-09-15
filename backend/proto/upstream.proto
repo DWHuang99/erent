@@ -16,6 +16,8 @@ service UpstreamService {
    rpc GetProvider(ProviderRequest) returns (ProviderResponse);
    // Returns verified claims; verification failures use a non-OK gRPC status.
    rpc Verifier(VerifyRequest) returns (VerifyResponse);
+   rpc ChatStream(ChatRequest) returns (stream ChatResponse);
+   rpc ChatNonStream(ChatRequest) returns (ChatResponse);
 }
 
 message ExchangeCodeRequest{
@@ -98,4 +100,18 @@ message VerifyResponse{
     string nonce = 6;
     // Verified JSON claims, including provider-specific account and email fields.
     bytes claims_json = 7;
+}
+
+message ChatRequest {
+  bytes data = 1;
+  string secret = 2;
+  string endpoint = 3;
+  string authmode = 4;
+  string auth_header = 5;
+  string auth_prefix = 6;
+  map<string, string> headers = 7;
+}
+
+message ChatResponse {
+  string content = 1;
 }

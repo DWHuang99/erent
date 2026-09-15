@@ -8,6 +8,7 @@ import (
 	"erent/internal/rpc/upstream"
 
 	"golang.org/x/oauth2"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -174,4 +175,46 @@ func (d *Directory) RefreshToken(ctx context.Context, refreshtoken string, provi
 		token.Expiry = response.ExpiresAt.AsTime()
 	}
 	return token.WithExtra(map[string]any{"id_token": response.IdToken}), nil
+}
+
+func (d *Directory) ChatStream(
+	ctx context.Context,
+	body []byte,
+	secret string,
+	authmode string,
+	endpoint string,
+	authHeader, authPrefix string,
+	headers map[string]string,
+) (grpc.ServerStreamingClient[upstream.ChatResponse], error) {
+	return d.client.ChatStream(ctx, &upstream.ChatRequest{
+		Data:       body,
+		Secret:     secret,
+		Endpoint:   endpoint,
+		Authmode:   authmode,
+		AuthHeader: authHeader,
+		AuthPrefix: authPrefix,
+		Headers:    headers,
+	})
+}
+
+func (d *Directory) ChatNonStream(
+	ctx context.Context,
+	body []byte,
+	secret string,
+	authmode string,
+	endpoint string,
+	authHeader, authPrefix string,
+	headers map[string]string,
+) (upstream.ChatResponse, error) {
+	result, err := d.client.ChatNonStream(ctx, &upstream.ChatRequest{
+		Data: body, Secret: secret, Authmode: authmode, Endpoint: endpoint,
+		AuthHeader: authHeader, AuthPrefix: authPrefix, Headers: headers,
+	})
+	if err != nil {
+		return upstream.ChatResponse{}, err
+	}
+	if result == nil {
+		return upstream.ChatResponse{}, status.Error(codes.Internal, "empty upstream response")
+	}
+	return upstream.ChatResponse{Content: result.Content}, nil
 }

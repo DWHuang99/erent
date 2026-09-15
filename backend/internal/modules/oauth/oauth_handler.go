@@ -39,10 +39,9 @@ func randomValue() (string, error) {
 }
 
 func (h *OauthHandler) Login(c *gin.Context) {
-	userID, ok := c.Get(jwtservice.UserIDContextKey)
-	ownerID, valid := userID.(uint64)
-	if !ok || !valid || ownerID == 0 {
-		response.Error(c, http.StatusUnauthorized, 40100, "authentication required")
+	ownerID, err := getUserid(c)
+	if err != nil {
+		response.Error(c, 401, 40100, "authentication required")
 		return
 	}
 	provider := c.Query("provider")

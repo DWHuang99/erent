@@ -10,15 +10,15 @@ Browser → /oauth/callback → OauthService → *upstreamdirectory.Directory
 
 API 负责 Redis 登录流程、授权地址、claims 解码与 nonce/账号归属检查、HTTP 错误映射和凭证加密持久化。service 包内 verifyIDToken 经具体 Directory 调用远程验签；OIDCAuth 不持有 Directory 或远程验签状态。directory 负责 deadline、protobuf 转换和 gRPC 错误转换；upstream 负责 provider 初始化、PKCE verifier 提交和有界的 token 兑换。连接由 API 的 applicationInstances 创建并关闭，路由装配将 directory 注入 service。
 
-API 通过 GetProvider 获取元数据、通过 Verifier 验证 ID token；只有 upstream 执行 OIDC discovery 和 JWKS 获取，token 兑换与刷新也由 upstream 执行。API 无需直连 issuer，但初始化时必须能连接已就绪的 upstream。两端应使用一致的 OAI issuer、client ID、client secret 与 redirect URL。Service 按 provider 保存多个实例；当前启动装配 oai。Login 校验 provider 并将其与用户、nonce、verifier 一起绑定到 Redis state；Callback 仅使用已保存的 provider，不接收回调 provider。
+API 通过 GetProvider 获取元数据、通过 Verifier 验证 ID token；只有 upstream 执行 OIDC discovery 和 JWKS 获取，token 兑换与刷新也由 upstream 执行。API 无需直连 issuer；启用 provider 时初始化需能连接已就绪的 upstream，仅创建 gRPC client 不发起 discovery。两端应使用一致的 OAI issuer、client ID、client secret 与 redirect URL。Service 按 provider 保存多个实例；当前启动装配 oai。Login 校验 provider 并将其与用户、nonce、verifier 一起绑定到 Redis state；Callback 仅使用已保存的 provider，不接收回调 provider。
 
-成功回调返回统一 JSON `{code:0,data:null,message:"oauth credentials saved"}`，不返回 provider token。SaveToken 验证 ID token 与 nonce，并加密保存到当前流程用户的 oauth_infos；scopes 包含 openid、profile、email、offline_access。
+成功回调返回统一 JSON `{code:0,data:null,message:"oauth credentials saved"}`，不返回 provider token。浏览器流程的 SaveToken 验证 ID token 与 nonce，并加密保存到当前流程用户的 oauth_infos；scopes 包含 openid、profile、email、offline_access。
 
 `GET /oauth/list` 仅返回 JWT 用户的账号元数据。`POST /oauth/refresh` 接收 `{id}`：Service 开启事务，Repository 按用户和 ID 加行锁查询，Service 解密既有 refresh token，经 directory 的 RefreshToken RPC 调用 upstream TokenSource；加密并保存新凭证后提交事务。可选 refresh/ID token 缺失时保留原值。它与本地 JWT refresh 接口相互独立；当前没有自动刷新任务。
 
 ## 设备授权内部 RPC
 
-`GetDeviceFlowCode` 和 `PollDeviceFlow` 经 OAuth Service → Directory → upstream 调用。仅支持已配置的 `oai`，设备端点固定为 OpenAI 的 `/api/accounts/deviceauth/usercode` 和 `/api/accounts/deviceauth/token`，client ID 使用配置值。申请返回 `device_auth_id`、`user_code`、正整数 `interval_seconds` 和 `verification_url`；轮询成功返回内部 `authorization_code` 与 `code_verifier`，不是最终 token。设备 handler 已接入：`POST /oauth/logindevice?provider=oai` 和 `POST /oauth/callbackdevice?provider=oai` 均要求本站 JWT。申请将设备 ID、用户码、间隔、provider、用户 ID 和过期时间保存在 Redis；完成只用请求中的设备 ID 查找服务端记录，校验归属并原子消费后执行 Poll → Exchange → SaveToken。完成失败需重新申请，其他用户的请求不会消费原记录。现有前端授权页面尚未切换到设备入口。
+`GetDeviceFlowCode` 和 `PollDeviceFlow` 经 OAuth Service → Directory → upstream 调用。仅支持已配置的 `oai`，设备端点固定为 OpenAI 的 `/api/accounts/deviceauth/usercode` 和 `/api/accounts/deviceauth/token`，client ID 使用配置值。申请返回 `device_auth_id`、`user_code`、正整数 `interval_seconds` 和 `verification_url`；轮询成功返回内部 `authorization_code` 与 `code_verifier`，不是最终 token。设备 handler 已接入：`POST /oauth/logindevice?provider=oai` 和 `POST /oauth/callbackdevice?provider=oai` 均要求本站 JWT。申请将设备 ID、用户码、间隔、provider、用户 ID 和过期时间保存在 Redis；完成只用请求中的设备 ID 查找服务端记录，校验归属并原子消费后执行 Poll → Exchange → SaveToken。完成失败需重新申请，其他用户的请求不会消费原记录。前端 `/oauth` 已提供设备授权入口，同时保留浏览器授权和手动回调。取得设备码后页面自动调用一次完成接口，展示验证链接与用户码，保存成功后跳转已授权账号页；取消/卸载中断等待并忽略迟到响应。复制按钮优先 Clipboard API，不可用时回退到 textarea/execCommand，失败提示手动复制。取消或超时后应先检查账号是否已保存，再决定重新授权。
 
 轮询只对 403/404 按上游间隔继续等待；普通 RPC deadline 不适用于整个设备轮询，最长等待 15 分钟并遵守更短的调用方 deadline，单次 HTTP 请求仍受 `UPSTREAM_OAUTH_TIMEOUT` 限制。handler 使用申请时保存的过期时间限制完整完成请求，忽略浏览器提交的验证码和间隔。Axios、Web Nginx 与 Gateway 仅对设备完成路径设置 16 分钟等待，其余请求沿用原超时。非等待错误不会自动重试：未启用对应 `ErrProviderUnavailable`，参数无效对应 `ErrInvalidDeviceFlow`，上游拒绝对应 `ErrDeviceFlowRejected`，响应异常对应 `ErrDeviceFlowFailed`，超时对应 `ErrDeviceFlowTimeout`，取消保留 `context.Canceled`，网络/限流/服务异常对应 `ErrUpstreamUnavailable`。错误不携带上游响应体。
 

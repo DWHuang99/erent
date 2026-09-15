@@ -13,15 +13,15 @@ flowchart LR
     API --> PostgreSQL[(PostgreSQL users + Casbin policy + oauth_infos)]
     API --> Redis[(Redis refresh sessions + OAuth login flows)]
     Upstream -->|OIDC discovery / JWKS| OIDC[OIDC Provider]
-    API -->|gRPC GetProvider / Verifier / ExchangeCode / RefreshToken| Upstream[OAuth upstream]
-    Upstream -->|OIDC discovery / token exchange / refresh| OIDC
+    API -->|gRPC metadata / verification / tokens / device authorization| Upstream[OAuth upstream]
+    Upstream -->|OIDC discovery / token exchange / refresh / deviceauth| OIDC
     API --> Logs[(api-logs rotating JSON files)]
     Migrations[backend/migrations] --> Migrator[One-shot migrate job]
     Migrator --> PostgreSQL
     Migrator -. completed successfully .-> API
 ```
 
-`backend/docker-compose.yml` 定义名为 `ai-gateway-go-auth` 的本地 Stack，包含 API、upstream、PostgreSQL、Redis、migration、Gateway 与 Web 容器。Gateway 是无状态单上游代理，不持有身份或业务数据；`migrate` 是一次性 schema job；API 的轮转文件日志保存在 `api-logs` named volume。Web 容器等待 Gateway healthy 后启动，并把宿主机 `WEB_PORT` 绑定到容器 `8080`。Compose 显式读取仓库根 `.env`；后端构建上下文与 migration 挂载路径相对于 `backend/`，Web 构建上下文是同级 `frontend/`。后端 Dockerfile 还提供继承 `migrate/migrate` 且携带版本化 SQL 的 `migrations` 发布 target。upstream 以独立 gRPC 进程提供 token 兑换与 health 服务，50051 仅在 Compose 内部暴露；当前没有 K8s 配置或服务发现，API 不提供本地 JWT 的 JWKS；OIDC 身份验证使用提供方的签名密钥。API 支持可选的 OIDC Authorization Code + PKCE 授权和凭证管理。
+`backend/docker-compose.yml` 定义名为 `ai-gateway-go-auth` 的本地 Stack，包含 API、upstream、PostgreSQL、Redis、migration、Gateway 与 Web 容器。Gateway 是无状态单上游代理，不持有身份或业务数据；`migrate` 是一次性 schema job；API 的轮转文件日志保存在 `api-logs` named volume。Web 容器等待 Gateway healthy 后启动，并把宿主机 `WEB_PORT` 绑定到容器 `8080`。Compose 显式读取仓库根 `.env`；后端构建上下文与 migration 挂载路径相对于 `backend/`，Web 构建上下文是同级 `frontend/`。后端 Dockerfile 还提供继承 `migrate/migrate` 且携带版本化 SQL 的 `migrations` 发布 target。upstream 以独立 gRPC 进程提供 token 兑换与 health 服务，50051 仅在 Compose 内部暴露；当前没有 K8s 配置或服务发现，API 不提供本地 JWT 的 JWKS；OIDC 身份验证使用提供方的签名密钥。API 支持可选的 OIDC Authorization Code + PKCE、OAI 设备授权和凭证管理。
 
 `frontend/` 是与 `backend/` 同级的独立 Vue 3 + Vite 单页管理界面。开发服务器把 `/api`、`/health` 与 `/oauth` 代理到 `127.0.0.1:8080`；生产镜像以 Node.js stage 执行 `npm ci`/`npm run build`，再由 Nginx 在 `8080` 提供 `dist`。Nginx 对普通页面使用 `try_files` 回退到 `index.html`，对指纹化 `/assets/` 使用长期缓存，并把 `/api/`、`/health/`、`/oauth/` 同源代理到 `gateway:8080`；API 代理关闭响应缓冲并放宽读取超时，为后续流式响应保留传输边界。前端通过 `frontend/src/axios/` 下的共享 Axios 模块消费后端公开 HTTP 合同，不直接访问 PostgreSQL 或 Redis。
 
@@ -78,6 +78,8 @@ gRPC 协议另定义 GetProvider 和 Verifier：前者返回已配置 issuer 的
 ```text
 GET /oauth/login?provider=oai  # JWT
 GET /oauth/callback           # state 绑定身份，不接收 provider
+POST /oauth/logindevice?provider=oai     # JWT，申请设备授权
+POST /oauth/callbackdevice?provider=oai  # JWT，JSON {device_auth_id}，等待并保存
 GET /oauth/list               # JWT
 POST /oauth/refresh           # JWT，JSON {id}
 POST /oauth/delete            # JWT，JSON {id}
@@ -85,7 +87,7 @@ POST /oauth/delete            # JWT，JSON {id}
 
 `OauthService` 按 provider 保存 OIDC 实例。Login 校验 provider 和当前用户，生成随机 state、nonce 与 PKCE verifier，将 Provider、UserID、Nonce、Verifier、ExpiresAt 以 `oidc:flow:<state>` 保存到 Redis，TTL 为 5 分钟；返回统一 JSON 中的授权 URL，由前端打开。Callback 使用 Redis `GETDEL` 一次性消费 state，仅使用流程中保存的 provider 和用户身份，通过 directory 兑换 token，验证 ID token 签名、issuer、audience、nonce 和账号声明，再加密保存凭证。当前装配 OAI，scopes 为 openid、profile、email、offline_access。
 
-列表只按 JWT 用户查询账号元数据，返回 `data.oauthlist`，空列表为 `[]`，不查询或返回 token。前端 `/oauth` 提供授权及手动粘贴回调 URL 的入口，`/authorized-accounts` 展示账号并提供刷新及删除按钮；删除期间禁用该账号的刷新和删除操作，成功后移除卡片并更新计数，失败保留卡片并显示错误。HTTP 响应统一为 `{code,data,message}`；回调保存成功后，浏览器 HTML 请求通过 303 跳转到同域 `/authorized-accounts`；JSON 请求或未指定 HTML 的请求仍返回 `oauth credentials saved`。回调响应禁止缓存并设置 no-referrer。
+列表只按 JWT 用户查询账号元数据，返回 `data.oauthlist`，空列表为 `[]`，不查询或返回 token。前端 `/oauth` 同时提供设备授权和浏览器授权/手动粘贴回调 URL 的入口，`/authorized-accounts` 展示账号并提供刷新及删除按钮；删除期间禁用该账号的刷新和删除操作，成功后移除卡片并更新计数，失败保留卡片并显示错误。HTTP 响应统一为 `{code,data,message}`；回调保存成功后，浏览器 HTML 请求通过 303 跳转到同域 `/authorized-accounts`；JSON 请求或未指定 HTML 的请求仍返回 `oauth credentials saved`。回调响应禁止缓存并设置 no-referrer。
 
 删除只接受记录 ID，复用 OAuthRefreshRequest 的必填非零 ID 校验，用户身份取自 JWT。Repository 按 `id + user_id` 物理删除本地凭证，不调用上游撤销接口；成功返回 200，记录不存在、已删除或属于其他用户均返回 404，数据库错误返回 500，每次只输出一个统一 JSON 响应。
 
@@ -93,7 +95,15 @@ POST /oauth/delete            # JWT，JSON {id}
 
 directory/server 使用有界 context，传递 access token、refresh token、ID token、token type 和可选 expiry，隔离上游错误详情。错误合同、mTLS 与无重试约定见 `docs/upstream.md`。当前没有后台定时刷新任务，本地 1455 回调由浏览器所在电脑的 Nginx 接收服务通过 302 转交控制台 `/oauth/callback`。
 
-设备授权基础调用链为 `OauthService.GetDeviceFlowCode/Poll → Directory.GetDeviceFlowCode/PollDeviceFlow → upstream gRPC → OpenAI deviceauth`。upstream 使用固定 OpenAI 设备授权端点和已配置 OAI client ID 构造请求，API 不直连设备授权端点。申请返回设备 ID、用户码、验证链接和正整数秒间隔；轮询仅在上游返回 403/404 时按该间隔等待，成功返回内部授权码和 verifier。整体等待最多 15 分钟并继承调用方取消/更短期限，单次 HTTP 请求使用 upstream 请求超时；directory 的普通 RPC 超时不截断这段人工确认等待。目前仅提供 Service 级能力，尚未接入设备授权 HTTP handler、用户会话绑定、设备专用 token 兑换或保存流程；调用方后续必须按申请时记录的过期时间限制等待，授权码与 verifier 不得发送给浏览器。
+设备授权调用链为 `LoginDeviceFlow → GetDeviceFlowCode → Directory → upstream`，随后由原前端页面调用一次 `CallbackDeviceFlow → Poll → Exchange → SaveToken`。两个设备 HTTP 接口均要求本站 JWT，OpenAI 不回调本站。申请返回 `device_auth_id`、`user_code`、`interval` 和 `verification_url`，同时以 `oidc:device:<device_auth_id>` 在 Redis 保存 `deviceLoginFlow`（provider、用户 ID、设备 ID、用户码、间隔和过期时间）。完成请求只按设备 ID 查找记录，校验用户、provider 和过期时间后通过 Lua 比较并删除，一次性消费；其他用户的请求不会消费记录，前端传入的用户码和间隔不作为授权依据。完成失败需重新申请，凭证只在身份校验及加密入库成功后报告保存成功。
+
+upstream 使用固定 OpenAI 设备端点和配置中的 client ID，API 不直连端点。轮询仅在 403/404 时按申请返回的秒间隔等待，每轮重建请求体，成功返回内部授权码和 verifier。完整完成请求受申请时记录的 15 分钟有效期约束；directory/server 轮询最多等待 15 分钟并继承更短的 context，单次 HTTP 请求仍受 upstream 请求超时限制。Axios、Web Nginx、Gateway 仅对 `/oauth/callbackdevice` 放宽到 16 分钟，其他接口保持原超时；这是一条可取消的长请求，不是独立后台任务。
+
+`ExchangeCodeRequest.flow_type` 由服务端 handler 设置。空值或 `browser` 使用原配置的 RedirectURL；`device` 在 upstream 复制配置后使用 `https://auth.openai.com/deviceauth/callback`，不修改并发共享配置，也不会触发浏览器跳转。SaveToken 的 `isbrowser` 仅控制 nonce 非空及匹配校验；两种模式均校验 ID token 签名、issuer、audience、有效期和账号声明，并绑定本站用户加密保存。
+
+Vue 设备入口展示验证码、复制按钮和新标签页验证链接，取得设备信息后立即发送一次完成请求；后端保存成功后原页面跳转 `/authorized-accounts`。申请及等待期间禁止重复发起；取消或卸载页面时通过 AbortController 中断请求，并忽略旧请求的迟到结果。取消/超时不代表服务器一定未保存，页面提示先检查已授权账号。复制优先使用 Clipboard API；在 HTTP 等 Clipboard API 不可用环境中回退到临时 textarea 与 execCommand，完成后移除元素并恢复焦点，失败时提示手动复制。
+
+API 始终加载 upstream gRPC 配置并创建延迟连接的 client/directory，独立于 OAI 开关。仅 OAI provider 初始化及其加密密钥加载仍在 OAI 启用条件下；readiness 仅在 provider map 非空时检查 upstream，单纯创建 client 不会要求远端在线。目前仅装配 OAI，设备流程与浏览器流程共用账号存储。
 
 ## 4. 登录调用链
 
@@ -230,7 +240,7 @@ Compose 文件位于 `backend/`；API/Gateway build context 是当前后端目�
 
 - 已实现：Vue 3 登录页与受保护首页、登录后跳转、access token 会话恢复、自动 refresh 重试、退出登录、响应式导航和明暗主题；Node/Nginx 多阶段生产镜像提供 SPA 回退、静态资源缓存及同源 API/readiness 代理；
 - 已实现：后端注册、登录、access JWT、Redis refresh rotation、logout、当前用户、初始化管理员、Casbin 三角色首页权限、readiness；
-- 已实现：OIDC discovery、一次性 state、PKCE、nonce 与 ID token 验证、多 provider Service、凭证加密持久化、用户隔离列表与手动刷新、OAuth 授权页与已授权账号页、upstream gRPC 兑换/刷新、mTLS 与健康检查；
+- 已实现：OIDC discovery、一次性 state、PKCE、nonce 与 ID token 验证、多 provider Service、凭证加密持久化、用户隔离列表与手动刷新、OAuth 授权页与已授权账号页、upstream gRPC 兑换/刷新、mTLS 与健康检查；OAI 设备授权的前端交互、Redis 用户绑定、可取消轮询、设备专用兑换及凭证保存；
 - 未实现：OAuth 后台定时刷新，以及除 OAI 外的 provider 启动装配；
 - 未实现：真实验证码服务、改密、多设备会话管理、角色/策略管理、细粒度业务权限、审计；
 - 未实现：Provider、模型目录、Chat Completions、SSE、WebSocket；

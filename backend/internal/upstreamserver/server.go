@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -393,4 +394,84 @@ func deviceHTTPError(httpStatus int) error {
 		code = codes.Unavailable
 	}
 	return status.Error(code, "device authorization rejected")
+}
+
+func (s *server) ChatStream(request *upstream.ChatRequest, stream grpc.ServerStreamingServer[upstream.ChatResponse]) error {
+	ctx := stream.Context()
+	if request == nil || len(bytes.TrimSpace(request.Data)) == 0 || strings.TrimSpace(request.Secret) == "" || strings.TrimSpace(request.AuthHeader) == "" {
+		return status.Error(codes.InvalidArgument, "data, secret and auth header are required")
+	}
+	if err := ctx.Err(); err != nil {
+		return status.FromContextError(err).Err()
+	}
+
+	err := Stream(
+		ctx,
+		request.Data,
+		request.Secret,
+		request.Authmode,
+		func(chunk Chunk) error {
+			return stream.Send(&upstream.ChatResponse{
+				Content: chunk.Content,
+			})
+		},
+		request.Endpoint,
+		request.AuthHeader,
+		request.AuthPrefix,
+		request.Headers,
+	)
+
+	if err != nil {
+		if ctx.Err() != nil {
+			return status.FromContextError(ctx.Err()).Err()
+		}
+		if _, ok := status.FromError(err); ok {
+			return err
+		}
+		return status.Error(chatStreamErrorCode(err), "upstream stream failed")
+	}
+
+	return nil
+}
+
+func chatStreamErrorCode(err error) codes.Code {
+	if errors.Is(err, context.Canceled) {
+		return codes.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return codes.DeadlineExceeded
+	}
+	var httpError *HTTPError
+	if errors.As(err, &httpError) {
+		switch httpError.StatusCode {
+		case http.StatusBadRequest, http.StatusUnprocessableEntity:
+			return codes.InvalidArgument
+		case http.StatusUnauthorized:
+			return codes.Unauthenticated
+		case http.StatusForbidden:
+			return codes.PermissionDenied
+		case http.StatusNotFound:
+			return codes.NotFound
+		case http.StatusTooManyRequests:
+			return codes.ResourceExhausted
+		case http.StatusRequestTimeout, http.StatusGatewayTimeout:
+			return codes.DeadlineExceeded
+		default:
+			if httpError.StatusCode >= 500 {
+				return codes.Unavailable
+			}
+			return codes.Internal
+		}
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) {
+		if networkError.Timeout() {
+			return codes.DeadlineExceeded
+		}
+		return codes.Unavailable
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return codes.Unavailable
+	}
+	return codes.Internal
 }

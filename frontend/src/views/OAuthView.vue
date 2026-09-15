@@ -60,8 +60,27 @@ function cancelDevice(showMessage = true) {
 
 async function copyDeviceCode() {
   const current = device.value
+  if (!current || disposed) return
   try {
-    await navigator.clipboard.writeText(current.user_code)
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(current.user_code)
+    } else {
+      const input = document.createElement('textarea')
+      const previousFocus = document.activeElement
+      input.value = current.user_code
+      input.readOnly = true
+      input.style.position = 'fixed'
+      input.style.opacity = '0'
+      document.body.appendChild(input)
+      try {
+        input.select()
+        input.setSelectionRange(0, input.value.length)
+        if (!document.execCommand('copy')) throw new Error('Copy failed')
+      } finally {
+        input.remove()
+        previousFocus?.focus({ preventScroll: true })
+      }
+    }
     if (!disposed && device.value === current) copyMessage.value = '授权码已复制'
   } catch {
     if (!disposed && device.value === current) copyMessage.value = '复制失败，请手动选择并复制授权码。'

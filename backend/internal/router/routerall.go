@@ -4,7 +4,9 @@ package apirouter
 import (
 	upstreamdirectory "erent/internal/directory/upstream"
 	jwtservice "erent/internal/middleware/jwt"
+	"erent/internal/modules/apikey"
 	"erent/internal/modules/auth"
+	"erent/internal/modules/chat"
 	"erent/internal/modules/oauth"
 	"erent/internal/modules/oauth/oidc"
 	"erent/internal/modules/user"
@@ -13,6 +15,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 )
+
+func ApikeyRouter(api *gin.RouterGroup, repository *apikey.ApikeyRepository, jwtManager *jwtservice.JWTManager) {
+	apikey.RegisterApikeyRoutes(api, apikey.NewHandler(apikey.NewService(repository)), jwtManager)
+}
+
+func ChatRouter(api *gin.RouterGroup, directory *upstreamdirectory.Directory) {
+	chat.RegisterChatRoutes(api, chat.NewChatHandler(directory))
+}
 
 func AuthRouter(
 	api *gin.RouterGroup,

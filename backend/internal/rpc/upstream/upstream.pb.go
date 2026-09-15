@@ -747,6 +747,142 @@ func (x *VerifyResponse) GetClaimsJson() []byte {
 	return nil
 }
 
+type ChatRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	Secret        string                 `protobuf:"bytes,2,opt,name=secret,proto3" json:"secret,omitempty"`
+	Endpoint      string                 `protobuf:"bytes,3,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
+	Authmode      string                 `protobuf:"bytes,4,opt,name=authmode,proto3" json:"authmode,omitempty"`
+	AuthHeader    string                 `protobuf:"bytes,5,opt,name=auth_header,json=authHeader,proto3" json:"auth_header,omitempty"`
+	AuthPrefix    string                 `protobuf:"bytes,6,opt,name=auth_prefix,json=authPrefix,proto3" json:"auth_prefix,omitempty"`
+	Headers       map[string]string      `protobuf:"bytes,7,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChatRequest) Reset() {
+	*x = ChatRequest{}
+	mi := &file_proto_upstream_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatRequest) ProtoMessage() {}
+
+func (x *ChatRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_upstream_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatRequest.ProtoReflect.Descriptor instead.
+func (*ChatRequest) Descriptor() ([]byte, []int) {
+	return file_proto_upstream_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ChatRequest) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *ChatRequest) GetSecret() string {
+	if x != nil {
+		return x.Secret
+	}
+	return ""
+}
+
+func (x *ChatRequest) GetEndpoint() string {
+	if x != nil {
+		return x.Endpoint
+	}
+	return ""
+}
+
+func (x *ChatRequest) GetAuthmode() string {
+	if x != nil {
+		return x.Authmode
+	}
+	return ""
+}
+
+func (x *ChatRequest) GetAuthHeader() string {
+	if x != nil {
+		return x.AuthHeader
+	}
+	return ""
+}
+
+func (x *ChatRequest) GetAuthPrefix() string {
+	if x != nil {
+		return x.AuthPrefix
+	}
+	return ""
+}
+
+func (x *ChatRequest) GetHeaders() map[string]string {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+type ChatResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Content       string                 `protobuf:"bytes,1,opt,name=content,proto3" json:"content,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChatResponse) Reset() {
+	*x = ChatResponse{}
+	mi := &file_proto_upstream_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatResponse) ProtoMessage() {}
+
+func (x *ChatResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_upstream_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatResponse.ProtoReflect.Descriptor instead.
+func (*ChatResponse) Descriptor() ([]byte, []int) {
+	return file_proto_upstream_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ChatResponse) GetContent() string {
+	if x != nil {
+		return x.Content
+	}
+	return ""
+}
+
 var File_proto_upstream_proto protoreflect.FileDescriptor
 
 const file_proto_upstream_proto_rawDesc = "" +
@@ -810,14 +946,32 @@ const file_proto_upstream_proto_rawDesc = "" +
 	"\tissued_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt\x12\x14\n" +
 	"\x05nonce\x18\x06 \x01(\tR\x05nonce\x12\x1f\n" +
 	"\vclaims_json\x18\a \x01(\fR\n" +
-	"claimsJson2\xd0\x03\n" +
+	"claimsJson\"\xad\x02\n" +
+	"\vChatRequest\x12\x12\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\x12\x16\n" +
+	"\x06secret\x18\x02 \x01(\tR\x06secret\x12\x1a\n" +
+	"\bendpoint\x18\x03 \x01(\tR\bendpoint\x12\x1a\n" +
+	"\bauthmode\x18\x04 \x01(\tR\bauthmode\x12\x1f\n" +
+	"\vauth_header\x18\x05 \x01(\tR\n" +
+	"authHeader\x12\x1f\n" +
+	"\vauth_prefix\x18\x06 \x01(\tR\n" +
+	"authPrefix\x12<\n" +
+	"\aheaders\x18\a \x03(\v2\".upstream.ChatRequest.HeadersEntryR\aheaders\x1a:\n" +
+	"\fHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"(\n" +
+	"\fChatResponse\x12\x18\n" +
+	"\acontent\x18\x01 \x01(\tR\acontent2\xcf\x04\n" +
 	"\x0fUpstreamService\x12N\n" +
 	"\x11GetDeviceFlowCode\x12\x1b.upstream.DeviceFlowRequest\x1a\x1c.upstream.DeviceFlowResponse\x12X\n" +
 	"\x0ePollDeviceFlow\x12\x1f.upstream.PollDeviceFlowRequest\x1a%.upstream.DeviceAuthorizationResponse\x12F\n" +
 	"\fExchangeCode\x12\x1d.upstream.ExchangeCodeRequest\x1a\x17.upstream.TokenResponse\x12F\n" +
 	"\fRefreshToken\x12\x1d.upstream.RefreshTokenRequest\x1a\x17.upstream.TokenResponse\x12D\n" +
 	"\vGetProvider\x12\x19.upstream.ProviderRequest\x1a\x1a.upstream.ProviderResponse\x12=\n" +
-	"\bVerifier\x12\x17.upstream.VerifyRequest\x1a\x18.upstream.VerifyResponseB\x1dZ\x1berent/internal/rpc/upstreamb\x06proto3"
+	"\bVerifier\x12\x17.upstream.VerifyRequest\x1a\x18.upstream.VerifyResponse\x12=\n" +
+	"\n" +
+	"ChatStream\x12\x15.upstream.ChatRequest\x1a\x16.upstream.ChatResponse0\x01\x12>\n" +
+	"\rChatNonStream\x12\x15.upstream.ChatRequest\x1a\x16.upstream.ChatResponseB\x1dZ\x1berent/internal/rpc/upstreamb\x06proto3"
 
 var (
 	file_proto_upstream_proto_rawDescOnce sync.Once
@@ -831,7 +985,7 @@ func file_proto_upstream_proto_rawDescGZIP() []byte {
 	return file_proto_upstream_proto_rawDescData
 }
 
-var file_proto_upstream_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_proto_upstream_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_proto_upstream_proto_goTypes = []any{
 	(*ExchangeCodeRequest)(nil),         // 0: upstream.ExchangeCodeRequest
 	(*RefreshTokenRequest)(nil),         // 1: upstream.RefreshTokenRequest
@@ -844,29 +998,37 @@ var file_proto_upstream_proto_goTypes = []any{
 	(*ProviderResponse)(nil),            // 8: upstream.ProviderResponse
 	(*VerifyRequest)(nil),               // 9: upstream.VerifyRequest
 	(*VerifyResponse)(nil),              // 10: upstream.VerifyResponse
-	(*timestamppb.Timestamp)(nil),       // 11: google.protobuf.Timestamp
+	(*ChatRequest)(nil),                 // 11: upstream.ChatRequest
+	(*ChatResponse)(nil),                // 12: upstream.ChatResponse
+	nil,                                 // 13: upstream.ChatRequest.HeadersEntry
+	(*timestamppb.Timestamp)(nil),       // 14: google.protobuf.Timestamp
 }
 var file_proto_upstream_proto_depIdxs = []int32{
-	11, // 0: upstream.TokenResponse.expires_at:type_name -> google.protobuf.Timestamp
-	11, // 1: upstream.VerifyResponse.expires_at:type_name -> google.protobuf.Timestamp
-	11, // 2: upstream.VerifyResponse.issued_at:type_name -> google.protobuf.Timestamp
-	4,  // 3: upstream.UpstreamService.GetDeviceFlowCode:input_type -> upstream.DeviceFlowRequest
-	6,  // 4: upstream.UpstreamService.PollDeviceFlow:input_type -> upstream.PollDeviceFlowRequest
-	0,  // 5: upstream.UpstreamService.ExchangeCode:input_type -> upstream.ExchangeCodeRequest
-	1,  // 6: upstream.UpstreamService.RefreshToken:input_type -> upstream.RefreshTokenRequest
-	3,  // 7: upstream.UpstreamService.GetProvider:input_type -> upstream.ProviderRequest
-	9,  // 8: upstream.UpstreamService.Verifier:input_type -> upstream.VerifyRequest
-	5,  // 9: upstream.UpstreamService.GetDeviceFlowCode:output_type -> upstream.DeviceFlowResponse
-	7,  // 10: upstream.UpstreamService.PollDeviceFlow:output_type -> upstream.DeviceAuthorizationResponse
-	2,  // 11: upstream.UpstreamService.ExchangeCode:output_type -> upstream.TokenResponse
-	2,  // 12: upstream.UpstreamService.RefreshToken:output_type -> upstream.TokenResponse
-	8,  // 13: upstream.UpstreamService.GetProvider:output_type -> upstream.ProviderResponse
-	10, // 14: upstream.UpstreamService.Verifier:output_type -> upstream.VerifyResponse
-	9,  // [9:15] is the sub-list for method output_type
-	3,  // [3:9] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	14, // 0: upstream.TokenResponse.expires_at:type_name -> google.protobuf.Timestamp
+	14, // 1: upstream.VerifyResponse.expires_at:type_name -> google.protobuf.Timestamp
+	14, // 2: upstream.VerifyResponse.issued_at:type_name -> google.protobuf.Timestamp
+	13, // 3: upstream.ChatRequest.headers:type_name -> upstream.ChatRequest.HeadersEntry
+	4,  // 4: upstream.UpstreamService.GetDeviceFlowCode:input_type -> upstream.DeviceFlowRequest
+	6,  // 5: upstream.UpstreamService.PollDeviceFlow:input_type -> upstream.PollDeviceFlowRequest
+	0,  // 6: upstream.UpstreamService.ExchangeCode:input_type -> upstream.ExchangeCodeRequest
+	1,  // 7: upstream.UpstreamService.RefreshToken:input_type -> upstream.RefreshTokenRequest
+	3,  // 8: upstream.UpstreamService.GetProvider:input_type -> upstream.ProviderRequest
+	9,  // 9: upstream.UpstreamService.Verifier:input_type -> upstream.VerifyRequest
+	11, // 10: upstream.UpstreamService.ChatStream:input_type -> upstream.ChatRequest
+	11, // 11: upstream.UpstreamService.ChatNonStream:input_type -> upstream.ChatRequest
+	5,  // 12: upstream.UpstreamService.GetDeviceFlowCode:output_type -> upstream.DeviceFlowResponse
+	7,  // 13: upstream.UpstreamService.PollDeviceFlow:output_type -> upstream.DeviceAuthorizationResponse
+	2,  // 14: upstream.UpstreamService.ExchangeCode:output_type -> upstream.TokenResponse
+	2,  // 15: upstream.UpstreamService.RefreshToken:output_type -> upstream.TokenResponse
+	8,  // 16: upstream.UpstreamService.GetProvider:output_type -> upstream.ProviderResponse
+	10, // 17: upstream.UpstreamService.Verifier:output_type -> upstream.VerifyResponse
+	12, // 18: upstream.UpstreamService.ChatStream:output_type -> upstream.ChatResponse
+	12, // 19: upstream.UpstreamService.ChatNonStream:output_type -> upstream.ChatResponse
+	12, // [12:20] is the sub-list for method output_type
+	4,  // [4:12] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_proto_upstream_proto_init() }
@@ -880,7 +1042,7 @@ func file_proto_upstream_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_upstream_proto_rawDesc), len(file_proto_upstream_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

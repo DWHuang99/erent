@@ -6,6 +6,12 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     {
+      path: '/api-keys',
+      name: 'api-keys',
+      component: () => import('../views/DashboardView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/authorized-accounts',
       name: 'authorized-accounts',
       component: () => import('../views/DashboardView.vue'),
