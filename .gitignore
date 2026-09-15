@@ -55,3 +55,14 @@ certs/
 *.keystore
 
 todo/
+
+# Personal agent instructions and local reference documents
+AGENTS.md
+AGENTS.override.md
+ARCHITECTURE.md
+CODEBASE.md
+.agents/
+.codex/
+sync-personal-rules.ps1
+/docs/upstream.md
+/docs/deployment.md

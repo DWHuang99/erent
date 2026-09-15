@@ -1,224 +1,126 @@
-# AI Gateway Go V2
+# erent 本地部署
 
-Go 后端现在位于独立的 `backend/`，采用与 `D:/vue-element-plus-admin/backend` 相同方向的模块化单体分层：DTO、Middleware、Auth/User/OAuth Handler-Service-Repository、总 Router 和进程装配彼此分离。数据库访问使用 GORM；已加入可选的通用 OIDC Authorization Code + PKCE 登录骨架并接入 OpenAI 配置，OAuth token 兑换已通过 gRPC 拆分到独立 upstream 进程，JWKS 尚未引入，OAuth token 持久化与登录完成跳转仍待实现。
+AI Gateway 提供本地登录、OAuth 账号管理、API Key 管理及聊天请求转发。本文从首次克隆开始说明本地 Docker 部署；项目设计、OAuth 与 gRPC 边界见 [项目架构](docs/README.md)。
 
-## 仓库布局
+## 1. 准备环境
 
-```text
-ai-gateway/
-├─ backend/              # 完整 Go module 和 Dockerfile
-│  ├─ cmd/
-│  ├─ internal/
-│  ├─ migrations/         # PostgreSQL 版本化 up/down migration
-│  ├─ docker-compose.yml  # 后端、基础设施与 Nginx Web 本地 Stack
-│  ├─ go.mod
-│  └─ go.sum
-├─ frontend/             # Vue 3 + Vite 源码及 Nginx 生产镜像
-├─ docs/
-│  └─ deployment.md      # 公开发布与私有部署边界
-├─ .env                  # 本地 Compose 配置，位于最外层且不提交
-└─ .env.example          # 可提交的配置示例
-```
-
-仓库不再包含 K8s 或旧部署目录。
-
-## 当前认证与授权能力
-
-- GORM + PostgreSQL 用户表与初始化管理员；
-- bcrypt 用户名密码登录；
-- 注册流程固定创建 `user` 角色，成功返回 `201`，重复用户名返回 `409`；
-- Casbin RBAC 使用 GORM Adapter 持久化到 PostgreSQL；
-- 当前只支持 `user`、`admin`、`test` 三种角色，三者都只有 `dashboard:view`（查看首页）权限；
-- 本地 HS256 access JWT，不提供 JWKS；
-- Redis refresh token，Redis key 只保存原 token 的 SHA-256；
-- refresh token 通过 HttpOnly、SameSite=Lax Cookie 返回；
-- refresh 时原子删除旧 token 并创建新 token，旧 token 不能重放；
-- logout 删除 Redis token，且没有 Cookie 时仍幂等成功；
-- 登录和 refresh 会把 Casbin 计算出的角色、权限写入 access JWT；
-- `/users/me` 和 `/auth/verify` 经 JWT Filter 后回查数据库，并返回 Casbin 角色与权限；
-- Gateway 代理 API；API 经 gRPC 调用独立 upstream 完成 OAuth token 兑换。
-- Nginx/Vite 代理 `/oai/`，授权入口为 `GET /oai/login`，回调为 `GET /oai/callback`。
-
-当前路由：
-
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| `POST` | `/api/v1/auth/login` | 返回 access token，并设置 refresh Cookie |
-| `POST` | `/api/v1/auth/register` | 注册本地 `user` 用户，不允许客户端选择角色 |
-| `POST` | `/api/v1/auth/refresh` | 轮换 refresh Cookie，返回新 access token |
-| `POST` | `/api/v1/auth/logout` | 删除 refresh token 并清除 Cookie |
-| `GET` | `/api/v1/users/me` | Bearer JWT 验证并返回当前用户 |
-| `GET` | `/api/v1/auth/verify` | 当前用户验证兼容入口 |
-| `GET` | `/health/live` | 进程 liveness |
-| `GET` | `/health/ready` | API 检查 PostgreSQL、Redis，启用 OAuth 时额外检查 upstream；Gateway 代理该结果 |
-
-## Compose 启动
-
-根目录已经放置本地 `.env`，Compose 会自动读取：
+- Git、Docker Engine / Docker Desktop，以及 Docker Compose v2。
+- 能拉取基础镜像和构建依赖的网络；启用 OAuth 时 upstream 还需访问提供方。
+- 默认使用本机端口 5432、8080、8088、1455，请先确保未被其他服务占用。
+- 全容器部署不需要本机安装 Go 或 Node.js。
 
 ```powershell
+git clone https://github.com/DWHuang99/erent.git
+cd erent
+Copy-Item .env.example .env
+```
+
+已有 `.env` 时保留现有配置，不要覆盖。以下命令均从仓库根目录执行。
+
+## 2. 配置环境变量
+
+编辑 `.env`：
+
+| 变量 | 本地配置说明 |
+| --- | --- |
+| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | 数据库名称、用户和密码；替换示例密码 |
+| `JWT_SECRET` | 替换为至少 32 字符的随机密钥 |
+| `BOOTSTRAP_ADMIN_USERNAME` / `BOOTSTRAP_ADMIN_PASSWORD` | 首次初始化管理员的登录凭据；替换示例值 |
+| `APP_PORT` / `WEB_PORT` | Gateway / Web 宿主机端口，默认 8080 / 8088 |
+| `COOKIE_SECURE` | 本地 HTTP 使用 `false`；HTTPS 部署使用 `true` |
+| `OAI_ISSUER` / `OAI_CLIENT_ID` / `OAI_REDIRECT_URL` | 可选 OAuth 配置；整组留空可先运行本地登录与管理页面 |
+| `OAI_CLIENT_SECRET` | 按提供方要求配置，公开客户端可留空 |
+| `OAUTH_ENCRYPTION_KEY` | 启用 OAuth 时必填，Base64 编码的随机 32 字节 AES 密钥；持久保管，更换后旧凭据无法解密 |
+
+PowerShell 可用以下命令生成随机密钥，分别生成 JWT 和 OAuth 密钥：
+
+```powershell
+$randomBytes = New-Object byte[] 32
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($randomBytes)
+[Convert]::ToBase64String($randomBytes)
+$rng.Dispose()
+```
+
+Compose 自动把容器内数据库、Redis 和 gRPC 地址设置为服务名；直接运行 Go 时才使用 `.env.example` 中的本机地址，并确保 `DATABASE_URL` 与数据库凭据一致。Go 进程本身不加载 `.env`。
+
+## 3. 构建并启动
+
+```powershell
+docker compose --env-file .env -f backend/docker-compose.yml config --quiet
 docker compose --env-file .env -f backend/docker-compose.yml up --build -d
 docker compose --env-file .env -f backend/docker-compose.yml ps -a
 ```
 
-[backend/docker-compose.yml](backend/docker-compose.yml) 是本地 Compose Stack，名称为 `ai-gateway-go-auth`。命令显式使用根 `.env`；API/Gateway 构建上下文和 migration 路径相对于 `backend/`，Web 构建上下文指向同级 `frontend/`。启动顺序为 PostgreSQL healthy → `migrate` 执行完成 → API healthy → Gateway healthy → Nginx Web；Redis、upstream 与 migration 并行准备，API 同时等待 upstream 健康。`migrate` 正常完成后显示为 `Exited (0)`，这是一次性任务的预期状态。
+Stack 包括 PostgreSQL、Redis、一次性 migrate、API、upstream、Gateway、Web 和本地 OAuth 回调接收服务。API 等待数据库、Redis、upstream 健康以及迁移成功后启动。`migrate` 显示 `Exited (0)` 属于正常状态。
 
-API 日志以 JSON 同时写入 Docker 标准输出和 `/var/log/ai-gateway/app.log`。文件位于持久化的 `api-logs` named volume，单文件上限 100 MB，最多保留 10 个备份和 30 天并压缩。查看实时日志仍优先使用：
-
-```powershell
-docker compose --env-file .env -f backend/docker-compose.yml logs -f api upstream gateway web
-```
-
-`cmd/healthcheck` 是 distroless 镜像内执行的 HTTP 探测客户端，负责请求 API `main` 暴露的 `/health/ready`；它不是重复的健康检查接口。
-
-版本文件位于 `backend/migrations/`，由 `migrate/migrate:v4.19.1` 执行；执行版本记录在 PostgreSQL 的 `schema_migrations` 表。API 不再运行 `AutoMigrate`，数据库结构变更必须新增成对的 `*.up.sql`、`*.down.sql`。当前版本：
-
-```text
-000001_users
-000002_casbin_rbac
-```
-
-PostgreSQL 已运行时可单独应用尚未执行的版本：
+- 控制台：[http://127.0.0.1:8088/login](http://127.0.0.1:8088/login)，使用 `.env` 中配置的管理员账号登录。
+- Gateway：[http://127.0.0.1:8080](http://127.0.0.1:8080)，用于直接调用 API。
+- 健康检查：
 
 ```powershell
+Invoke-RestMethod http://127.0.0.1:8080/health/ready
+docker compose --env-file .env -f backend/docker-compose.yml logs --tail 100 api upstream gateway web
+```
+
+初始化管理员采用幂等创建；修改 `.env` 的初始化密码不会重置已存在用户的密码。PostgreSQL 已初始化数据卷时，更改环境变量也不会自动修改数据库中的用户密码。
+
+## 4. 授权账号与 API Key
+
+启用 OAuth 后，在控制台进入授权页面，可选择设备授权或浏览器授权。浏览器方式使用提供方允许的回调地址；本地 Codex 回调入口为 `http://localhost:1455/auth/callback`。Compose 中的接收服务会将查询参数转交本地 Web 控制台。API 与 upstream 的 provider 配置必须一致，详见 [项目架构中的授权流程](docs/README.md#授权流程)。
+
+授权保存成功后，在“API Key”页面选择自己的已授权账号并创建密钥。完整密钥仅在创建时返回，请即时保存；列表仅显示前缀。页面支持修改有效期、启用/禁用、替换关联账号和删除。
+
+聊天接口使用 `Authorization: Bearer <API_KEY>`，通过 **Gateway 的 8080 端口**调用：
+
+| 方法 | 当前实际路径 | 请求格式 |
+| --- | --- | --- |
+| POST | `/chat/completions` | OpenAI Chat Completions |
+| POST | `/v1/response` | OpenAI Responses（当前路径为单数） |
+| POST | `/v1/messages` | Claude Messages |
+
+当前 Web Nginx 只代理 `/api/`、`/oauth/` 和 `/health/`，不能通过 8088 直接调用上述聊天路径。客户端需要支持配置实际请求 URL。模型与凭据组合以 `backend/internal/modules/chat/route/init.go` 中注册的路由为准。当前只选取首个符合条件的关联账号，无自动轮换或失败切换；过期凭据需在账号页面手动刷新。
+
+## 5. 停止、更新与数据
+
+```powershell
+# 停止服务并保留数据卷
+docker compose --env-file .env -f backend/docker-compose.yml down
+
+# 更新代码后重新构建并应用待执行迁移
+git pull --ff-only
+docker compose --env-file .env -f backend/docker-compose.yml up --build -d
+
+# 单独执行数据库迁移（PostgreSQL 已启动）
 docker compose --env-file .env -f backend/docker-compose.yml run --rm migrate
 ```
 
-也可以在 Git Bash 或 WSL 中从仓库根目录运行数据库更新脚本；脚本会先启动 PostgreSQL，再应用所有待执行版本：
+PostgreSQL、Redis、API 日志和 upstream 日志分别存放在 named volumes。需要保留数据时不要使用 `down -v`，该参数会删除数据卷。升级前备份数据库及 OAuth 加密密钥。迁移版本位于 `backend/migrations/`，当前包含 000001–000005（用户、RBAC、OAuth 凭据、账号归属、API Key）。生产进程不自动修改表结构。
 
-```bash
-bash .scripts/update-database.sh
-```
+## 6. 可选：本地开发
 
-默认开放两个仅本机可访问的入口：`http://127.0.0.1:8080` 直达 Gateway，便于 API 调试；`http://127.0.0.1:8088` 由 Nginx 提供生产构建后的 Vue 页面，并将 `/api`、`/health` 同源代理到 Gateway。当前 `.env` 使用开发凭据，部署前必须修改管理员密码、PostgreSQL 密码和 `JWT_SECRET`。
-
-完整登录、刷新和注销示例：
-
-```powershell
-$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-
-$login = Invoke-RestMethod `
-  -Method Post `
-  -Uri 'http://127.0.0.1:8080/api/v1/auth/login' `
-  -ContentType 'application/json' `
-  -Body '{"username":"admin","password":"admin12345"}' `
-  -WebSession $session
-
-Invoke-RestMethod `
-  -Uri 'http://127.0.0.1:8080/api/v1/users/me' `
-  -Headers @{ Authorization = "Bearer $($login.data.accessToken)" }
-
-$refreshed = Invoke-RestMethod `
-  -Method Post `
-  -Uri 'http://127.0.0.1:8080/api/v1/auth/refresh' `
-  -WebSession $session
-
-Invoke-RestMethod `
-  -Method Post `
-  -Uri 'http://127.0.0.1:8080/api/v1/auth/logout' `
-  -WebSession $session
-```
-
-注册请求沿用原后端合同；当前只检查 `code` 非空，尚未接入验证码发送或校验服务：
-
-```powershell
-Invoke-RestMethod `
-  -Method Post `
-  -Uri 'http://127.0.0.1:8080/api/v1/auth/register' `
-  -ContentType 'application/json' `
-  -Body '{"username":"new-user","password":"password123","check_password":"password123","code":"123456","iAgree":true}'
-```
-
-## 前端开发
-
-Vue 3 管理界面位于与 `backend/` 同级的 `frontend/`。开发服务器会把 `/api`、`/health` 和 `/oai` 请求代理到本机 `127.0.0.1:8080`，因此先启动后端，再启动前端：
-
-前端 HTTP 请求统一使用 `frontend/src/axios/` 下的 Axios 模块：`config.js` 定义默认拦截器，`service.js` 管理实例和 token 刷新，`index.js` 提供业务请求入口。请求拦截器注入 access token，响应拦截器在 `401` 时共享一次 refresh 请求并重试原请求；refresh token 仍只通过 HttpOnly Cookie 传输。
+前端使用 Node.js 22，后端 Go 版本以 `backend/go.mod` 为准。
 
 ```powershell
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-已安装前端依赖后，也可以在 Git Bash 或 WSL 中从仓库根目录一并启动前后端。脚本会显式使用根 `.env` 和 `backend/docker-compose.yml` 启动后端，再以前台进程启动 Vite；按 `Ctrl+C` 只停止前端，后端容器继续运行。脚本兼容在 WSL 中复用 Windows Node.js 和 `node_modules`：
-
-```bash
-bash .scripts/start.sh
-```
-
-需要在 IDE 中调试 Go 后端时，使用 debug 模式：
-
-```bash
-bash .scripts/start.sh debug
-```
-
-debug 模式会停止容器化的 Web、Gateway、API 和 upstream，只在 Docker 中启动 PostgreSQL、Redis 和 migration，并把 Redis 发布到本机 `127.0.0.1:6379`；Vite 仍以前台进程运行。随后在 IDE 中分别以 Debug 模式启动 `backend/cmd/upstream`（默认 `127.0.0.1:50051`）和 `backend/cmd/api`（默认 `127.0.0.1:8080`），即可命中 Go 源码断点。也可使用等价参数 `--debug`。
-
-浏览器访问 `http://127.0.0.1:5173/login`。登录页可进入 `/register` 创建账号；注册成功后会返回登录页、回填新用户名并显示成功提示，但不会自动登录。登录成功后自动进入首页；未登录访问首页会返回登录页。生产构建和前端测试：
-
-```powershell
-npm run build
-npm test
-```
-
-生产构建使用同源 `/api/v1` 与 `/health` 路径。`frontend/Dockerfile` 先通过 Node.js 构建 `dist`，再生成只包含静态产物和运行配置的 Nginx 镜像；`frontend/nginx.conf` 为 Vue Router 提供 SPA fallback，把 `/api/`、`/health/`、`/oai/` 转发到 Compose 网络内的 `gateway:8080`，并为 `/assets/` 设置长期缓存。执行前述 Compose 启动命令后可直接访问：
-
-```text
-http://127.0.0.1:8088/login
-```
-
-Vite 的 `5173` 入口仍用于开发热更新，Nginx 的 `8088` 入口用于验证生产构建和同源代理。后续私有部署仓库可以直接引用 Web 镜像，无需在生产服务器安装 Node.js。
-
-## 镜像发布与私有部署
-
-公开仓库的 `.github/workflows/release.yml` 在 `main` push、`v*` tag 或手动运行时发布五个 GHCR 镜像：
-
-```text
-ghcr.io/dwhuang99/erent-api:<source-sha>
-ghcr.io/dwhuang99/erent-gateway:<source-sha>
-ghcr.io/dwhuang99/erent-upstream:<source-sha>
-ghcr.io/dwhuang99/erent-migrations:<source-sha>
-ghcr.io/dwhuang99/erent-web:<source-sha>
-```
-
-生产部署位于私有仓库 [DWHuang99/erent-deploy](https://github.com/DWHuang99/erent-deploy)。私有 CD 手动接收同一个完整源码 SHA，拉取四个不可变镜像、执行匹配版本的 migration、启动 Stack 并验证 Nginx → Gateway → API readiness。生产 `.env`、SSH key、服务器地址和审批规则均不进入本公开仓库；配置步骤见 [docs/deployment.md](docs/deployment.md)。
-
-upstream 的独立服务器部署、环境变量、CD 和 GitHub Environment 待服务器确定后在私有仓库配置。当前本地 gRPC 调用链、错误合同、mTLS 和协议生成说明见 [docs/upstream.md](docs/upstream.md)。
-
-## 配置
-
-`.env` 和 `.env.example` 位于仓库最外层。`.env` 是不提交的本地 Compose 配置；`.env.example` 只提供可提交的演示占位值，不保存本地日志路径或真实凭据。重要变量：
-
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `WEB_PORT` | `8088` | Nginx Web 容器绑定到宿主机回环地址的端口 |
-| `LOG_FILE` | 未设置时 `./logs/backend/app.log` | 根 `.env` 为 Compose 设置 `/var/log/ai-gateway/app.log`，并写入持久化 volume |
-| `JWT_SECRET` | 无默认值 | 根 `.env` 中必填的 HS256 随机密钥，至少 32 字符 |
-| `JWT_ACCESS_TTL` | `15m` | access token 有效期 |
-| `JWT_REFRESH_TTL` | `168h` | refresh token 与 Cookie 有效期 |
-| `COOKIE_SECURE` | `false` | HTTPS 部署时必须设为 `true` |
-| `REDIS_ADDR` | `localhost:6379` | 本地直接运行时的 Redis 地址 |
-| `REDIS_DB` | `0` | refresh token Redis DB |
-| `BOOTSTRAP_ADMIN_USERNAME` | `admin` | 首次启动创建的管理员 |
-| `BOOTSTRAP_ADMIN_ROLE` | `admin` | 初始化用户角色，只允许 `user`、`admin`、`test` |
-
-Compose 内部会将 API 的数据库、Redis 和 gRPC 地址覆盖为 `postgres:5432`、`redis:6379` 与 `upstream:50051`。新进程的完整配置见 [docs/upstream.md](docs/upstream.md)。
-
-## 后端开发
-
-Go module 位于 `backend/`：
+Vite 默认入口为 [http://127.0.0.1:5173](http://127.0.0.1:5173)，请求代理到本机 8080。Git Bash / WSL 可在根目录运行 `bash .scripts/start.sh` 同时启动容器与 Vite；`bash .scripts/start.sh debug` 启动 PostgreSQL、Redis、迁移和回调服务，再由 IDE 启动 API 与 upstream。Ctrl+C 只停止 Vite，容器继续运行。
 
 ```powershell
 go -C backend test ./...
 go -C backend vet ./...
 go -C backend build ./cmd/...
+npm --prefix frontend test
+npm --prefix frontend run build
 ```
 
-直接运行 API 需要本机已有 PostgreSQL、Redis，目标数据库已应用 `backend/migrations`，并把根 `.env` 的变量导入当前进程：
+## 常见排查
 
-```powershell
-go -C backend run ./cmd/api
-```
-
-架构边界见 [ARCHITECTURE.md](ARCHITECTURE.md)，文件索引见 [CODEBASE.md](CODEBASE.md)。
+- `JWT_SECRET must be set`：确认已创建根 `.env`，且命令包含 `--env-file .env`。
+- API 未就绪：查看 `migrate`、PostgreSQL、Redis 和 upstream 日志；启用 OAuth 后检查 provider 配置与网络。
+- OAuth 回调失败：检查 1455 端口，以及 `OAUTH_CONSOLE_ORIGIN` 是否指向发起授权的同一控制台；修改配置后重新创建容器并重新授权。
+- 设备授权取消或超时：先检查已授权账号是否保存成功，再重新申请设备码。
+- 聊天返回 401 / 403 / 503：分别检查密钥状态、模型关联账号以及账号凭据有效期和 upstream 可用性。
