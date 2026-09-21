@@ -26,12 +26,14 @@ import AppLogo from '../components/AppLogo.vue'
 import OAuthView from './OAuthView.vue'
 import AuthorizedAccountsView from './AuthorizedAccountsView.vue'
 import ApiKeysView from './ApiKeysView.vue'
+import ExternalApiKeysView from './ExternalApiKeysView.vue'
 import { clearSession, getCurrentUser, getReadiness, logout } from '../services/auth.js'
 
 const router = useRouter()
 const route = useRoute()
 const isOAuthPage = computed(() => route.name === 'oauth')
 const isAccountsPage = computed(() => route.name === 'authorized-accounts')
+const isExternalKeysPage = computed(() => route.name === 'external-api-keys')
 const isApiKeysPage = computed(() => route.name === 'api-keys')
 const loading = ref(true)
 const refreshing = ref(false)
@@ -62,7 +64,7 @@ const navGroups = [
     label: '网关',
     items: [
       { label: 'API 密钥', icon: KeyRound, route: 'api-keys' },
-      { label: 'Provider', icon: Boxes, upcoming: true },
+      { label: '外部服务商 APIKey', icon: Boxes, route: 'external-api-keys' },
       { label: 'OAuth 登录', icon: ShieldCheck, route: 'oauth' },
       { label: '授权账号', icon: UsersRound, route: 'authorized-accounts' },
       { label: '调用日志', icon: FileClock, upcoming: true },
@@ -201,8 +203,8 @@ onUnmounted(() => document.removeEventListener('click', closeMenus))
             <Menu :size="20" />
           </button>
           <div>
-            <span class="breadcrumb">{{ isOAuthPage || isAccountsPage || isApiKeysPage ? '网关' : '运行' }} /</span>
-            <strong>{{ isApiKeysPage ? 'API 密钥' : isAccountsPage ? '授权账号处理' : isOAuthPage ? 'OAuth 登录' : '运行总览' }}</strong>
+            <span class="breadcrumb">{{ isOAuthPage || isAccountsPage || isApiKeysPage || isExternalKeysPage ? '网关' : '运行' }} /</span>
+            <strong>{{ isExternalKeysPage ? '外部服务商 APIKey' : isApiKeysPage ? 'API 密钥' : isAccountsPage ? '授权账号处理' : isOAuthPage ? 'OAuth 登录' : '运行总览' }}</strong>
           </div>
         </div>
 
@@ -234,6 +236,7 @@ onUnmounted(() => document.removeEventListener('click', closeMenus))
       <OAuthView v-if="isOAuthPage" />
       <AuthorizedAccountsView v-else-if="isAccountsPage" />
       <ApiKeysView v-else-if="isApiKeysPage" />
+      <ExternalApiKeysView v-else-if="isExternalKeysPage" />
       <main v-else class="dashboard-content">
         <section class="page-heading">
           <div>

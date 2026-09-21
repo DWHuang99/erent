@@ -3,7 +3,6 @@ package chat
 import (
 	"context"
 	"encoding/json"
-	upstreamdirectory "erent/internal/directory/upstream"
 	"erent/internal/dto/request"
 	"erent/internal/dto/response"
 	"erent/internal/modules/apikey"
@@ -21,11 +20,11 @@ import (
 )
 
 type ChatHandler struct {
-	service ChatService
+	service *ChatService
 }
 
-func NewChatHandler(directory *upstreamdirectory.Directory) *ChatHandler {
-	return &ChatHandler{service: ChatService{directory: directory}}
+func NewChatHandler(service *ChatService) *ChatHandler {
+	return &ChatHandler{service: service}
 }
 
 func (h *ChatHandler) Chat(c *gin.Context, w http.ResponseWriter, clientformat translator.Format) {

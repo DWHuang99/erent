@@ -1,6 +1,7 @@
 <script setup>
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { getApiKeys, createApiKey, updateApiKey, replaceApiKeyAccounts, deleteApiKey } from '../services/apikey.js'
+import { getExternalApiKeys } from '../services/external-apikey.js'
 import { getOAuthList } from '../services/oauth.js'
 
 const keys = ref([])
@@ -16,6 +17,8 @@ const accounts = ref([])
 const accountsLoading = ref(false)
 const accountsError = ref('')
 const selectedIds = ref([])
+const externalKeys = ref([])
+const selectedExternalIds = ref([])
 const disabled = ref(false)
 const expiry = ref('')
 const formError = ref('')
@@ -51,8 +54,8 @@ async function loadAccounts() {
   accountsLoading.value = true
   accountsError.value = ''
   try {
-    const result = await getOAuthList()
-    if (!disposed) accounts.value = result
+    const [result, external] = await Promise.all([getOAuthList(), getExternalApiKeys()])
+    if (!disposed) { accounts.value = result; externalKeys.value = external }
   } catch (cause) {
     if (!disposed) accountsError.value = cause.message
   } finally { accountsLoading.value = false }
@@ -61,6 +64,8 @@ async function loadAccounts() {
 async function openDialog(action, key = null) {
   mode.value = action
   selectedKey.value = key
+  selectedExternalIds.value = [...(key?.external_api_key_ids ?? [])]
+  externalKeys.value = []
   selectedIds.value = key?.accounts.map((account) => account.id) ?? []
   disabled.value = key?.disabled ?? false
   expiry.value = localTime(key?.expires_at)
@@ -86,14 +91,14 @@ async function save(action) {
   formError.value = ''
   formNotice.value = ''
   notice.value = ''
-  if ((action === 'create' || action === 'accounts') && !selectedIds.value.length) {
-    formError.value = '请至少选择一个授权账号。'
+  if ((action === 'create' && !selectedIds.value.length && !selectedExternalIds.value.length) || (action === 'accounts' && !selectedIds.value.length && !selectedExternalIds.value.length)) {
+    formError.value = '请至少选择一个授权账号或外部服务商 APIKey。'
     return
   }
   busy.value = true
   try {
     if (action === 'create') {
-      const raw = await createApiKey(selectedIds.value)
+      const raw = await createApiKey(selectedIds.value, selectedExternalIds.value)
       if (disposed) return
       secret.value = raw
       mode.value = 'secret'
@@ -106,7 +111,7 @@ async function save(action) {
       selectedKey.value = { ...selectedKey.value, disabled: disabled.value, expires_at: expiresAt }
       formNotice.value = '状态与有效期已保存。'
     } else if (action === 'accounts') {
-      await replaceApiKeyAccounts(selectedKey.value.id, selectedIds.value)
+      await replaceApiKeyAccounts(selectedKey.value.id, selectedIds.value, selectedExternalIds.value)
       if (disposed) return
       formNotice.value = '授权范围已保存。'
     } else {
@@ -151,14 +156,14 @@ onUnmounted(() => { disposed = true; secret.value = '' })
     <p v-if="notice" class="feedback" role="status">{{ notice }}</p>
     <section aria-label="API 密钥列表" :aria-busy="loading" class="key-list">
       <p v-if="loading && !loaded" class="empty" role="status">正在加载 API 密钥…</p>
-      <div v-else-if="loaded && !keys.length" class="empty"><h2>暂无 API 密钥</h2><p>点击“添加 API 密钥”，选择可使用的授权账号。</p></div>
+      <div v-else-if="loaded && !keys.length" class="empty"><h2>暂无 API 密钥</h2><p>点击“添加 API 密钥”，选择可使用的授权账号或外部服务商 APIKey。</p></div>
       <article v-for="key in keys" :key="key.id" class="key-card">
         <div class="key-info">
           <div class="identity"><span class="key-id">#{{ key.id }}</span><span class="status" :class="{ inactive: status(key) !== '已启用' }">{{ status(key) }}</span></div>
           <h2>API 密钥</h2>
           <code>{{ key.key_prefix }}******</code>
           <p class="metadata">有效期：{{ key.expires_at ? new Date(key.expires_at).toLocaleString('zh-CN', { hour12: false }) : '永不过期' }}</p>
-          <div class="scope"><span>授权范围</span><span v-if="!key.accounts.length">暂无绑定账号</span><span v-for="account in key.accounts" :key="account.id" class="account-tag">{{ account.email || `账号 #${account.id}` }} · {{ account.type }}{{ account.disabled ? '（已禁用）' : '' }}</span></div>
+          <div class="scope"><span>OAuth 授权范围</span><span v-if="!key.accounts.length">暂无绑定账号</span><span v-for="account in key.accounts" :key="account.id" class="account-tag">{{ account.email || `账号 #${account.id}` }} · {{ account.type }}{{ account.disabled ? '（已禁用）' : '' }}</span></div>
         </div>
         <div class="card-controls">
           <div class="actions">
@@ -196,16 +201,23 @@ onUnmounted(() => { disposed = true; secret.value = '' })
           </form>
           <form @submit.prevent="save(mode === 'create' ? 'create' : 'accounts')">
             <fieldset :disabled="busy || accountsLoading">
-              <legend>授权账号范围</legend>
-              <p class="hint">选择此密钥可使用的账号，至少选择一个。已禁用账号暂不可用于调用。</p>
+              <legend>授权范围</legend>
+              <p class="hint">选择要授权的 OAuth 账号或外部服务商 APIKey，至少选择一项。两类授权一起保存。已禁用账号暂不可用于调用。</p>
               <p v-if="accountsLoading" role="status">正在加载授权账号…</p>
               <p v-else-if="accountsError" class="error" role="alert">{{ accountsError }} <button type="button" @click="loadAccounts">重试</button></p>
               <p v-else-if="!accounts.length">暂无授权账号，请先前往 <RouterLink :to="{ name: 'oauth' }">OAuth 登录</RouterLink> 添加账号。</p>
               <div v-else class="account-options">
                 <label v-for="account in accounts" :key="account.id" class="check account-option"><input v-model="selectedIds" type="checkbox" :value="account.id" /><span>{{ account.email || account.accountId || `账号 #${account.id}` }}<small>{{ account.type }} · #{{ account.id }}{{ account.disabled ? ' · 已禁用' : '' }}</small></span></label>
               </div>
-              <p class="hint">已选择 {{ selectedIds.length }} 个账号</p>
-              <div class="actions end"><button class="primary" type="submit" :disabled="!!accountsError || !accounts.length || !selectedIds.length">{{ busy ? '保存中…' : mode === 'create' ? '创建密钥' : '保存授权范围' }}</button></div>
+              <template v-if="!accountsLoading && !accountsError">
+                <h3>外部服务商 APIKey</h3>
+                <p v-if="!externalKeys.length">暂无外部密钥，请先前往 <RouterLink :to="{ name: 'external-api-keys' }">外部服务商 APIKey</RouterLink> 添加。</p>
+                <div v-else class="account-options">
+                  <label v-for="external in externalKeys" :key="external.id" class="check account-option"><input v-model="selectedExternalIds" type="checkbox" :value="external.id" /><span>{{ external.endpoint }}<small>外部密钥 #{{ external.id }}</small></span></label>
+                </div>
+              </template>
+              <p class="hint">已选择 {{ selectedIds.length }} 个账号、{{ selectedExternalIds.length }} 个外部密钥</p>
+              <div class="actions end"><button class="primary" type="submit" :disabled="!!accountsError || (!selectedIds.length && !selectedExternalIds.length)">{{ busy ? '保存中…' : mode === 'create' ? '创建密钥' : '保存授权范围' }}</button></div>
             </fieldset>
           </form>
         </template>

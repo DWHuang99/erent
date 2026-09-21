@@ -8,7 +8,7 @@ const source = readFileSync(new URL('../src/views/ApiKeysView.vue', import.meta.
   .split('<script setup>')[1].split('</script>')[0].replace(/^import .*$/gm, '')
 function setup(overrides = {}) {
   let unmount
-  const view = runInNewContext(`${source}\n;({ save, closeDialog, secret, mode, selectedIds, selectedKey, disabled, expiry, formError, formNotice, error, dialog, copySecret })`, {
+  const view = runInNewContext(`${source}\n;({ save, selectedExternalIds, closeDialog, secret, mode, selectedIds, selectedKey, disabled, expiry, formError, formNotice, error, dialog, copySecret })`, {
     ref, nextTick: async () => {}, onMounted() {}, onUnmounted(fn) { unmount = fn },
     getApiKeys: async () => [], createApiKey: async () => 'sk-created-secret',
     updateApiKey: async () => {}, replaceApiKeyAccounts: async () => {}, deleteApiKey: async () => {},
@@ -17,6 +17,19 @@ function setup(overrides = {}) {
   view.dialog.value = { close() {} }
   return { ...view, unmount: () => unmount() }
 }
+
+test('editing submits both scopes in one request including external-only scope', async () => {
+  const calls = []
+  const view = setup({ replaceApiKeyAccounts: async (...args) => calls.push(args) })
+  view.selectedKey.value = { id: 7 }
+  view.selectedIds.value = [10]
+  view.selectedExternalIds.value = [3]
+  await view.save('accounts')
+  assert.equal(JSON.stringify(calls), '[[7,[10],[3]]]')
+  view.selectedIds.value = []
+  await view.save('accounts')
+  assert.equal(JSON.stringify(calls[1]), '[7,[],[3]]')
+})
 
 test('creation requires scope and keeps one-time secret even if list refresh fails', async () => {
   const view = setup({ getApiKeys: async () => { throw new Error('list failed') } })
@@ -58,4 +71,15 @@ test('clipboard errors preserve secret for manual copy and unmount clears it', a
   assert.equal(view.secret.value, 'sk-secret')
   view.unmount()
   assert.equal(view.secret.value, '')
+})
+
+ test('creation accepts external-only scope and submits both selections', async () => {
+  const calls = []
+  const view = setup({ createApiKey: async (...args) => { calls.push(args); return 'sk-external-secret' } })
+  view.selectedExternalIds.value = [3]
+  await view.save('create')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0][0].length, 0)
+  assert.equal(calls[0][1][0], 3)
+  assert.equal(view.secret.value, 'sk-external-secret')
 })

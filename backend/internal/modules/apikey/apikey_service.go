@@ -21,7 +21,10 @@ func NewService(repository *ApikeyRepository) *ApikeyService {
 	return &ApikeyService{repository: repository}
 }
 
-func (a *ApikeyService) CreatApikey(ctx context.Context, userid uint64, oauthinfos []uint64) (string, error) {
+func (a *ApikeyService) CreatApikey(ctx context.Context, userid uint64, oauthinfos, externalKeyIDs []uint64) (string, error) {
+	if userid == 0 || userid > 1<<63-1 || (len(oauthinfos) == 0 && len(externalKeyIDs) == 0) {
+		return "", ErrInvalidAccounts
+	}
 	// Deduplicate before checking ownership and writing associations.
 	ids := make([]uint64, 0, len(oauthinfos))
 	seen := make(map[uint64]bool, len(oauthinfos))
@@ -34,8 +37,30 @@ func (a *ApikeyService) CreatApikey(ctx context.Context, userid uint64, oauthinf
 			seen[id] = true
 		}
 	}
-	if err := a.checkOauth(ctx, userid, ids); err != nil {
-		return "", err
+	if len(ids) > 0 {
+		if err := a.checkOauth(ctx, userid, ids); err != nil {
+			return "", err
+		}
+	}
+	externalIDs := make([]uint64, 0, len(externalKeyIDs))
+	externalSeen := make(map[uint64]bool, len(externalKeyIDs))
+	for _, id := range externalKeyIDs {
+		if id == 0 || id > 1<<63-1 {
+			return "", ErrInvalidAccounts
+		}
+		if !externalSeen[id] {
+			externalIDs = append(externalIDs, id)
+			externalSeen[id] = true
+		}
+	}
+	if len(externalIDs) > 0 {
+		count, err := a.repository.CountOwnedExternalKeys(ctx, userid, externalIDs)
+		if err != nil {
+			return "", err
+		}
+		if count != int64(len(externalIDs)) {
+			return "", ErrInvalidAccounts
+		}
 	}
 
 	apikeyraw, apikeyhash, err := generateApikey()
@@ -46,7 +71,11 @@ func (a *ApikeyService) CreatApikey(ctx context.Context, userid uint64, oauthinf
 	ApikeyInfo := toApikeyinfo(apikeyhash, userid)
 	ApikeyInfo.KeyPrefix = apikeyraw[:12]
 	Apikeyaccounts := toApikeyaccounts(userid, ids)
-	if err := a.repository.SaveApikey(ctx, &ApikeyInfo, &Apikeyaccounts); err != nil {
+	externalKeys := make([]ApikeyExternalKey, 0, len(externalIDs))
+	for _, id := range externalIDs {
+		externalKeys = append(externalKeys, ApikeyExternalKey{UserID: userid, ExternalApiKeyID: id})
+	}
+	if err := a.repository.SaveApikey(ctx, &ApikeyInfo, &Apikeyaccounts, externalKeys); err != nil {
 		return "", err
 	}
 
@@ -97,7 +126,7 @@ func (a *ApikeyService) UpdateApikey(ctx context.Context, userid, id uint64, dis
 	return a.repository.UpdateApikey(ctx, userid, id, disabled, expiresAt, updateExpiry)
 }
 
-func (a *ApikeyService) ReplaceApikeyAccounts(ctx context.Context, userid, id uint64, oauthinfos []uint64) error {
+func (a *ApikeyService) ReplaceApikeyAccounts(ctx context.Context, userid, id uint64, oauthinfos, externalKeyIDs []uint64) error {
 	ids := make([]uint64, 0, len(oauthinfos))
 	seen := make(map[uint64]bool, len(oauthinfos))
 	for _, accountID := range oauthinfos {
@@ -109,10 +138,21 @@ func (a *ApikeyService) ReplaceApikeyAccounts(ctx context.Context, userid, id ui
 			seen[accountID] = true
 		}
 	}
-	if len(ids) == 0 {
+	if len(ids) == 0 && len(externalKeyIDs) == 0 {
 		return ErrInvalidAccounts
 	}
-	return a.repository.ReplaceApikeyAccounts(ctx, userid, id, ids)
+	externalIDs := make([]uint64, 0, len(externalKeyIDs))
+	externalSeen := make(map[uint64]bool, len(externalKeyIDs))
+	for _, keyID := range externalKeyIDs {
+		if keyID == 0 || keyID > 1<<63-1 {
+			return ErrInvalidAccounts
+		}
+		if !externalSeen[keyID] {
+			externalIDs = append(externalIDs, keyID)
+			externalSeen[keyID] = true
+		}
+	}
+	return a.repository.ReplaceApikeyAccounts(ctx, userid, id, ids, externalIDs)
 }
 
 func (a *ApikeyService) DeleteApikey(ctx context.Context, userid, id uint64) error {

@@ -10,9 +10,11 @@ function respond(config, data) { return { config, data, headers: {}, status: 200
 test('API key operations follow backend routes and request contracts', async () => {
   const cases = [
     ['get', '', undefined, { apikeylist: [] }, () => getApiKeys(), []],
-    ['post', '', { oauth_info: [10, 11] }, { api_key: 'sk-example-secret-key' }, () => createApiKey([10, 11]), 'sk-example-secret-key'],
+    ['post', '', { oauth_info: [10, 11], external_api_key_ids: [] }, { api_key: 'sk-example-secret-key' }, () => createApiKey([10, 11]), 'sk-example-secret-key'],
+    ['post', '', { oauth_info: [], external_api_key_ids: [3] }, { api_key: 'sk-external-secret-key' }, () => createApiKey([], [3]), 'sk-external-secret-key'],
+    ['post', '', { oauth_info: [10], external_api_key_ids: [3] }, { api_key: 'sk-mixed-secret-key' }, () => createApiKey([10], [3]), 'sk-mixed-secret-key'],
     ['patch', '/7', { disabled: false, expires_at: null }, null, () => updateApiKey(7, { disabled: false, expires_at: null }), null],
-    ['put', '/7/accounts', { oauth_info: [11] }, null, () => replaceApiKeyAccounts(7, [11]), null],
+    ['put', '/7/accounts', { oauth_info: [11], external_api_key_ids: [3] }, null, () => replaceApiKeyAccounts(7, [11], [3]), null],
     ['delete', '/7', undefined, null, () => deleteApiKey(7), null],
   ]
   for (const [method, path, data, result, run, expected] of cases) {

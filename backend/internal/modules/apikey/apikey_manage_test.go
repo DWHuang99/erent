@@ -14,9 +14,9 @@ import (
 )
 
 func TestApikeyManagement(t *testing.T) {
-	repo := testRepository(t)
+	repo := externalKeyRepository(t)
 	service := NewService(repo)
-	if _, err := service.CreatApikey(t.Context(), 1, []uint64{10}); err != nil {
+	if _, err := service.CreatApikey(t.Context(), 1, []uint64{10}, nil); err != nil {
 		t.Fatal(err)
 	}
 	manager := jwtservice.NewJWTManager(config.JWTConfig{Secret: "test-secret", Issuer: "test", Audience: "test", AccessTTL: time.Hour})
@@ -41,7 +41,7 @@ func TestApikeyManagement(t *testing.T) {
 	}
 	for _, tc := range []struct{ method, path, body string }{
 		{"PATCH", "/1", `{"disabled":true}`},
-		{"PUT", "/1/accounts", `{"oauth_info":[20]}`},
+		{"PUT", "/1/accounts", `{"external_api_key_ids":[],"oauth_info":[20]}`},
 		{"DELETE", "/1", ``},
 	} {
 		call(tc.method, tc.path, tc.body, 0, 401)
@@ -74,7 +74,7 @@ func TestApikeyManagement(t *testing.T) {
 	if readKey().ExpiresAt != nil {
 		t.Fatal("expiry not cleared")
 	}
-	for _, body := range []string{`{"oauth_info":[]}`, `{"oauth_info":[20]}`, `{"oauth_info":[999]}`, `{"oauth_info":[0]}`} {
+	for _, body := range []string{`{"external_api_key_ids":[],"oauth_info":[]}`, `{"external_api_key_ids":[],"oauth_info":[20]}`, `{"external_api_key_ids":[],"oauth_info":[999]}`, `{"external_api_key_ids":[],"oauth_info":[0]}`} {
 		call("PUT", "/1/accounts", body, 1, 400)
 	}
 	assertAccounts := func(want uint64) {
@@ -88,7 +88,7 @@ func TestApikeyManagement(t *testing.T) {
 		}
 	}
 	assertAccounts(10)
-	call("PUT", "/1/accounts", `{"oauth_info":[11,11]}`, 1, 200)
+	call("PUT", "/1/accounts", `{"external_api_key_ids":[],"oauth_info":[11,11]}`, 1, 200)
 	assertAccounts(11)
 	// Fail insertion after old bindings were deleted: the transaction must restore them.
 	if err := repo.database.Callback().Create().Before("gorm:create").Register("fail-bindings", func(tx *gorm.DB) {
@@ -98,7 +98,7 @@ func TestApikeyManagement(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	call("PUT", "/1/accounts", `{"oauth_info":[10]}`, 1, 500)
+	call("PUT", "/1/accounts", `{"external_api_key_ids":[],"oauth_info":[10]}`, 1, 500)
 	assertAccounts(11)
 	if err := repo.database.Callback().Create().Remove("fail-bindings"); err != nil {
 		t.Fatal(err)

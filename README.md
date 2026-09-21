@@ -75,11 +75,11 @@ docker compose --env-file .env -f backend/docker-compose.yml logs --tail 100 api
 
 | 方法 | 当前实际路径 | 请求格式 |
 | --- | --- | --- |
-| POST | `/chat/completions` | OpenAI Chat Completions |
-| POST | `/v1/response` | OpenAI Responses（当前路径为单数） |
+| POST | `/v1/chat/completions` | OpenAI Chat Completions |
+| POST | `/v1/responses` | OpenAI Responses |
 | POST | `/v1/messages` | Claude Messages |
 
-当前 Web Nginx 只代理 `/api/`、`/oauth/` 和 `/health/`，不能通过 8088 直接调用上述聊天路径。客户端需要支持配置实际请求 URL。模型与凭据组合以 `backend/internal/modules/chat/route/init.go` 中注册的路由为准。当前只选取首个符合条件的关联账号，无自动轮换或失败切换；过期凭据需在账号页面手动刷新。
+当前 Web Nginx 通过 `/v1/` 代理上述聊天路径。客户端需要支持配置实际请求 URL。模型与凭据组合以 `backend/internal/modules/chat/route/init.go` 中注册的路由为准。当前只选取首个符合条件的关联账号，无自动轮换或失败切换；过期凭据需在账号页面手动刷新。
 
 ## 5. 停止、更新与数据
 
