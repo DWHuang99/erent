@@ -33,10 +33,28 @@ type ChatRequest struct {
 }
 
 type CreatApikeyRequest struct {
-	OAuthInfo []uint64 `json:"oauth_info" binding:"required,min=1"`
+	OAuthInfo         []uint64 `json:"oauth_info"`
+	ExternalApiKeyIDs []uint64 `json:"external_api_key_ids"`
 }
 
 type UpdateApikeyRequest struct {
 	Disabled  *bool           `json:"disabled"`
 	ExpiresAt json.RawMessage `json:"expires_at"`
+}
+
+type ReplaceApikeyAccountsRequest struct {
+	OAuthInfo         *[]uint64 `json:"oauth_info" binding:"required"`
+	ExternalApiKeyIDs *[]uint64 `json:"external_api_key_ids" binding:"required"`
+}
+
+type ExternalApikeyRequest struct {
+	ExternalApikey string               `json:"external_apikey" binding:"required"`
+	Endpoint       string               `json:"endpoint" binding:"required"`
+	Suffix         ExternalApikeySuffix `json:"suffix"`
+}
+
+type ExternalApikeySuffix struct {
+	ChatCompletions string `json:"chat_completions"`
+	Responses       string `json:"responses"`
+	Messages        string `json:"messages"`
 }

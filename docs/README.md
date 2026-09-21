@@ -90,10 +90,10 @@ API Key 由安全随机数生成，仅创建时返回完整密钥；数据库保
 | GET | `/oauth/login`、`/oauth/list` | 本站 JWT |
 | GET | `/oauth/callback` | 一次性 state 绑定用户 |
 | POST | `/oauth/logindevice`、`/oauth/callbackdevice`、`/oauth/refresh`、`/oauth/delete` | 本站 JWT |
-| POST | `/chat/completions`、`/v1/response`、`/v1/messages` | Bearer API Key，分别为 Chat Completions / Responses / Claude 格式 |
+| POST | `/v1/chat/completions`、`/v1/responses`、`/v1/messages` | Bearer API Key，分别为 Chat Completions / Responses / Claude 格式 |
 | GET | `/health/live`、`/health/ready` | 存活 / 就绪 |
 
-聊天路径直接挂载在根路由，不带 `/api/v1` 前缀，Responses 路径当前为单数。Web Nginx / Vite 仅代理管理 API、OAuth 和健康接口；聊天客户端通过 Gateway 入口请求上述实际路径。
+聊天路径直接挂载在根路由，不带 `/api/v1` 前缀。Web Nginx 通过 `/v1/` 代理聊天接口；聊天客户端也可直接通过 Gateway 入口请求上述路径。
 
 ## 持久化与运行边界
 
