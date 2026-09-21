@@ -7,6 +7,7 @@ import (
 	"erent/internal/modules/apikey"
 	"erent/internal/modules/auth"
 	"erent/internal/modules/chat"
+	externalapikey "erent/internal/modules/external_apikey"
 	"erent/internal/modules/oauth"
 	"erent/internal/modules/oauth/oidc"
 	"erent/internal/modules/user"
@@ -20,8 +21,12 @@ func ApikeyRouter(api *gin.RouterGroup, repository *apikey.ApikeyRepository, jwt
 	apikey.RegisterApikeyRoutes(api, apikey.NewHandler(apikey.NewService(repository)), jwtManager)
 }
 
+func ExternalApikeyRouter(api *gin.RouterGroup, repository *externalapikey.Repository, jwtManager *jwtservice.JWTManager, encryptionKey []byte) {
+	externalapikey.RegisterRoutes(api, externalapikey.NewHandler(externalapikey.NewService(repository, encryptionKey)), jwtManager)
+}
+
 func ChatRouter(api *gin.RouterGroup, directory *upstreamdirectory.Directory) {
-	chat.RegisterChatRoutes(api, chat.NewChatHandler(directory))
+	chat.RegisterChatRoutes(api, chat.NewChatHandler(chat.NewChatService(directory)))
 }
 
 func AuthRouter(

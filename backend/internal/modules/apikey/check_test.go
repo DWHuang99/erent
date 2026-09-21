@@ -26,7 +26,7 @@ func authRepository(t *testing.T) (*ApikeyRepository, string) {
 			t.Fatal(err)
 		}
 	}
-	raw, err := NewService(repo).CreatApikey(t.Context(), 1, []uint64{10})
+	raw, err := NewService(repo).CreatApikey(t.Context(), 1, []uint64{10}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

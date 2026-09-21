@@ -26,11 +26,12 @@ func (Apikeyaccounts) TableName() string { return "api_key_accounts" }
 
 // ApikeyListItem exposes key metadata and bound accounts without credentials.
 type ApikeyListItem struct {
-	ID        uint64              `json:"id"`
-	KeyPrefix string              `json:"key_prefix"`
-	Disabled  bool                `json:"disabled"`
-	ExpiresAt *time.Time          `json:"expires_at"`
-	Accounts  []ApikeyAccountItem `json:"accounts" gorm:"-"`
+	ExternalApiKeyIDs []uint64            `json:"external_api_key_ids" gorm:"-"`
+	ID                uint64              `json:"id"`
+	KeyPrefix         string              `json:"key_prefix"`
+	Disabled          bool                `json:"disabled"`
+	ExpiresAt         *time.Time          `json:"expires_at"`
+	Accounts          []ApikeyAccountItem `json:"accounts" gorm:"-"`
 }
 
 type ApikeyAccountItem struct {

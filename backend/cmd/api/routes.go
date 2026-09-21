@@ -35,6 +35,7 @@ func newRouter(configuration apiConfiguration, instances *applicationInstances, 
 	)
 	apirouter.UserRouter(api, instances.userRepository, instances.jwtManager, instances.casbinEnforcer)
 	apirouter.ApikeyRouter(api, instances.apikeyRepository, instances.jwtManager)
+	apirouter.ExternalApikeyRouter(api, instances.externalApikeyRepository, instances.jwtManager, configuration.oauthEncryptionKey)
 	apirouter.OauthRouter(router.Group("/oauth"), instances.redisClient, instances.oidcAuth, instances.upstreamDirectory, instances.oauthRepository, instances.jwtManager, configuration.oauthEncryptionKey)
 	apirouter.ChatRouter(router.Group(""), instances.upstreamDirectory)
 

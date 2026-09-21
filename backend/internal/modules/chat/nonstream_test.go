@@ -261,11 +261,11 @@ func TestNonStreamHandlerWritesJSON(t *testing.T) {
 			}
 			return &upstream.ChatResponse{Content: `{"id":"test","choices":[]}`}, nil
 		}}
-		handler := NewChatHandler(upstreamdirectory.New(client, time.Second))
+		handler := NewChatHandler(NewChatService(upstreamdirectory.New(client, time.Second)))
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		c.Set("apikey_accounts", []apikey.ApikeyAccountItem{{ID: 10, Type: "codex", AccessToken: string(cipher)}})
-		c.Request = httptest.NewRequest("POST", "/chat/completions", strings.NewReader(`{"model":"handler-nonstream-test","messages":[{"role":"user","content":"hello"}],"stream":false}`))
+		c.Request = httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"handler-nonstream-test","messages":[{"role":"user","content":"hello"}],"stream":false}`))
 		handler.Chat(c, w, translator.FormatOpenAI)
 		if !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") {
 			t.Fatal("handler emitted SSE")

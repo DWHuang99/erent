@@ -20,6 +20,10 @@ type ChatService struct {
 	directory *upstreamdirectory.Directory
 }
 
+func NewChatService(directory *upstreamdirectory.Directory) *ChatService {
+	return &ChatService{directory: directory}
+}
+
 type Credential struct {
 	Mode   route.AuthMode // access_token / api_key
 	Secret string

@@ -44,12 +44,12 @@ func (h *ApikeyHandler) ReplaceApikeyAccounts(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req request.CreatApikeyRequest
+	var req request.ReplaceApikeyAccountsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, http.StatusBadRequest, 40000, "invalid api key request")
 		return
 	}
-	apikeyMutationResponse(c, h.service.ReplaceApikeyAccounts(c.Request.Context(), userid, id, req.OAuthInfo))
+	apikeyMutationResponse(c, h.service.ReplaceApikeyAccounts(c.Request.Context(), userid, id, *req.OAuthInfo, *req.ExternalApiKeyIDs))
 }
 
 func (h *ApikeyHandler) DeleteApikey(c *gin.Context) {
@@ -100,7 +100,7 @@ func (h *ApikeyHandler) CreatApikey(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, 40000, "invalid api key request")
 		return
 	}
-	raw, err := h.service.CreatApikey(c.Request.Context(), userid, req.OAuthInfo)
+	raw, err := h.service.CreatApikey(c.Request.Context(), userid, req.OAuthInfo, req.ExternalApiKeyIDs)
 	switch {
 	case errors.Is(err, ErrInvalidAccounts):
 		response.Error(c, http.StatusBadRequest, 40000, ErrInvalidAccounts.Error())

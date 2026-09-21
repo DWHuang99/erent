@@ -57,12 +57,12 @@ func TestCreateApikeyOwnershipAndHash(t *testing.T) {
 	repo := testRepository(t)
 	service := NewService(repo)
 	for _, ids := range [][]uint64{nil, {0}, {999}, {10, 20}, {1 << 63}} {
-		raw, err := service.CreatApikey(t.Context(), 1, ids)
+		raw, err := service.CreatApikey(t.Context(), 1, ids, nil)
 		if !errors.Is(err, ErrInvalidAccounts) || raw != "" {
 			t.Fatalf("invalid accounts %v: %q %v", ids, raw, err)
 		}
 	}
-	raw, err := service.CreatApikey(t.Context(), 1, []uint64{10, 11, 10})
+	raw, err := service.CreatApikey(t.Context(), 1, []uint64{10, 11, 10}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestCreateApikeyOwnershipAndHash(t *testing.T) {
 			t.Fatal("incorrect association")
 		}
 	}
-	second, err := service.CreatApikey(t.Context(), 1, []uint64{10})
+	second, err := service.CreatApikey(t.Context(), 1, []uint64{10}, nil)
 	if err != nil || second == raw {
 		t.Fatal("keys must differ and may share an account")
 	}
@@ -97,7 +97,7 @@ func TestSaveApikeyRollsBackAndCascades(t *testing.T) {
 	key := toApikeyinfo(strings.Repeat("a", 64), 1)
 	// Deliberately bypass service validation: the database must enforce ownership.
 	relations := toApikeyaccounts(1, []uint64{10, 20})
-	if err := repo.SaveApikey(t.Context(), &key, &relations); err == nil {
+	if err := repo.SaveApikey(t.Context(), &key, &relations, nil); err == nil {
 		t.Fatal("cross-owner association accepted")
 	}
 	for _, table := range []string{"api_keys", "api_key_accounts"} {
@@ -106,7 +106,7 @@ func TestSaveApikeyRollsBackAndCascades(t *testing.T) {
 			t.Fatalf("rollback %s: %d %v", table, count, err)
 		}
 	}
-	if _, err := NewService(repo).CreatApikey(t.Context(), 1, []uint64{10, 11}); err != nil {
+	if _, err := NewService(repo).CreatApikey(t.Context(), 1, []uint64{10, 11}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.database.Exec("DELETE FROM oauth_infos WHERE id = 10").Error; err != nil {
@@ -171,7 +171,7 @@ func TestCreateApikeyHTTP(t *testing.T) {
 	if err := repo.database.Callback().Create().Before("gorm:create").Register("fail", func(tx *gorm.DB) { tx.AddError(errors.New("write failed")) }); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := NewService(repo).CreatApikey(t.Context(), 1, []uint64{10})
+	raw, err := NewService(repo).CreatApikey(t.Context(), 1, []uint64{10}, nil)
 	if err == nil || raw != "" {
 		t.Fatal("returned secret after failed persistence")
 	}

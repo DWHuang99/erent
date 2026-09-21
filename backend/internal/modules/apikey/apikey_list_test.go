@@ -15,7 +15,7 @@ import (
 )
 
 func TestApikeyListIsAuthenticatedIsolatedAndContainsOnlyMetadata(t *testing.T) {
-	repo := testRepository(t)
+	repo := externalKeyRepository(t)
 	for _, statement := range []string{
 		"ALTER TABLE oauth_infos ADD COLUMN email TEXT NOT NULL DEFAULT 'owner@example.com'",
 		"ALTER TABLE oauth_infos ADD COLUMN type TEXT NOT NULL DEFAULT 'codex'",
@@ -37,7 +37,7 @@ func TestApikeyListIsAuthenticatedIsolatedAndContainsOnlyMetadata(t *testing.T) 
 	}{
 		{1, []uint64{10, 11}}, {2, []uint64{20}}, {1, []uint64{10}},
 	} {
-		raw, err := service.CreatApikey(t.Context(), seed.owner, seed.ids)
+		raw, err := service.CreatApikey(t.Context(), seed.owner, seed.ids, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

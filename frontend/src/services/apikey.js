@@ -6,7 +6,7 @@ async function send(method, path = '', data) {
     body = await service.request({ method, url: `/api/v1/api-keys${path}`, data })
   } catch (error) {
     const messages = {
-      400: '请求无效，请检查授权账号及有效期后重试。',
+      400: '请求无效，请检查授权账号、外部密钥及有效期后重试。',
       401: '登录状态已失效，请重新登录。',
       403: '你没有操作此 API 密钥的权限。',
       404: 'API 密钥不存在或接口不可用，请刷新列表。',
@@ -25,8 +25,8 @@ export async function getApiKeys() {
   return data.apikeylist
 }
 
-export async function createApiKey(ids) {
-  const data = await send('post', '', { oauth_info: ids })
+export async function createApiKey(ids, externalIds = []) {
+  const data = await send('post', '', { oauth_info: ids, external_api_key_ids: externalIds })
   if (typeof data?.api_key !== 'string' || !data.api_key.startsWith('sk-') || data.api_key.length <= 12) {
     throw new Error('服务端未返回完整密钥，请刷新列表检查创建结果。')
   }
@@ -34,5 +34,5 @@ export async function createApiKey(ids) {
 }
 
 export function updateApiKey(id, data) { return send('patch', `/${id}`, data) }
-export function replaceApiKeyAccounts(id, ids) { return send('put', `/${id}/accounts`, { oauth_info: ids }) }
+export function replaceApiKeyAccounts(id, ids, externalIds) { return send('put', `/${id}/accounts`, { oauth_info: ids, external_api_key_ids: externalIds }) }
 export function deleteApiKey(id) { return send('delete', `/${id}`) }

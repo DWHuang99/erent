@@ -152,8 +152,8 @@ func TestStreamCancellationUnblocksSender(t *testing.T) {
 func TestChatRoutesRejectInvalidInputAndUninitializedAuthentication(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	RegisterChatRoutes(router.Group(""), NewChatHandler(nil))
-	for _, path := range []string{"/v1/messages", "/v1/response", "/chat/completions"} {
+	RegisterChatRoutes(router.Group(""), NewChatHandler(NewChatService(nil)))
+	for _, path := range []string{"/v1/messages", "/v1/responses", "/v1/chat/completions"} {
 		for _, body := range []string{`{`, `{"stream":true}`, `{"model":"gpt-5.5","stream":true}`} {
 			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 			req.Header.Set("Authorization", "Bearer test")

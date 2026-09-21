@@ -16,6 +16,7 @@ import (
 	jwtservice "erent/internal/middleware/jwt"
 	rdb "erent/internal/middleware/redis"
 	"erent/internal/modules/apikey"
+	externalapikey "erent/internal/modules/external_apikey"
 	"erent/internal/modules/oauth"
 	"erent/internal/modules/oauth/oidc"
 	"erent/internal/modules/oauth/openai"
@@ -29,16 +30,17 @@ import (
 )
 
 type applicationInstances struct {
-	sqlDatabase        *sql.DB
-	redisClient        *redis.Client
-	userRepository     *user.Repository
-	oauthRepository    *oauth.Repository
-	apikeyRepository   *apikey.ApikeyRepository
-	casbinEnforcer     *casbin.SyncedEnforcer
-	jwtManager         *jwtservice.JWTManager
-	oidcAuth           map[string]*oidc.OIDCAuth
-	upstreamConnection *grpc.ClientConn
-	upstreamDirectory  *upstreamdirectory.Directory
+	sqlDatabase              *sql.DB
+	redisClient              *redis.Client
+	userRepository           *user.Repository
+	oauthRepository          *oauth.Repository
+	apikeyRepository         *apikey.ApikeyRepository
+	externalApikeyRepository *externalapikey.Repository
+	casbinEnforcer           *casbin.SyncedEnforcer
+	jwtManager               *jwtservice.JWTManager
+	oidcAuth                 map[string]*oidc.OIDCAuth
+	upstreamConnection       *grpc.ClientConn
+	upstreamDirectory        *upstreamdirectory.Directory
 }
 
 func newApplicationLogger() (*slog.Logger, io.Closer, error) {
@@ -77,6 +79,7 @@ func newApplicationInstances(configuration apiConfiguration) (_ *applicationInst
 	instances.userRepository = user.NewRepository(database)
 	instances.oauthRepository = oauth.NewRepository(database)
 	instances.apikeyRepository = apikey.NewRepository(database)
+	instances.externalApikeyRepository = externalapikey.NewRepo(database)
 	apikey.ApikeycheckInject(instances.apikeyRepository)
 	apikey.CredentialInject(configuration.oauthEncryptionKey)
 

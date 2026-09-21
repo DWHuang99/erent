@@ -16,10 +16,10 @@ func TestRouteSelection(t *testing.T) {
 		format translator.Format
 		route  Route
 	}{
-		{"model-a", AuthModeAPIKey, translator.FormatOpenAI, Route{Endpoint: "https://example.com/chat/completions", UpstreamFormat: translator.FormatOpenAI}},
+		{"model-a", AuthModeAPIKey, translator.FormatOpenAI, Route{Endpoint: "https://example.com/v1/chat/completions", UpstreamFormat: translator.FormatOpenAI}},
 		{"model-a", AuthModeAPIKey, translator.FormatOpenAIResponse, Route{Endpoint: "https://example.com/v1/responses", UpstreamFormat: translator.FormatOpenAIResponse}},
 		{"model-a", AuthModeAccessToken, translator.FormatOpenAI, Route{Endpoint: "https://example.com/codex/responses", UpstreamFormat: translator.FormatCodex, ForceStream: true}},
-		{"model-b", AuthModeAPIKey, translator.FormatOpenAI, Route{Endpoint: "https://other.example.com/chat/completions", UpstreamFormat: translator.FormatOpenAI}},
+		{"model-b", AuthModeAPIKey, translator.FormatOpenAI, Route{Endpoint: "https://other.example.com/v1/chat/completions", UpstreamFormat: translator.FormatOpenAI}},
 	}
 	for _, tc := range cases {
 		registry.register(tc.model, tc.mode, tc.format, tc.route)
@@ -30,7 +30,7 @@ func TestRouteSelection(t *testing.T) {
 			t.Fatalf("getRoute(%q, %q, %q) = %+v, %v; want %+v", tc.model, tc.mode, tc.format, got, err, tc.route)
 		}
 	}
-	updated := Route{Endpoint: "https://updated.example.com/chat/completions", UpstreamFormat: translator.FormatOpenAI}
+	updated := Route{Endpoint: "https://updated.example.com/v1/chat/completions", UpstreamFormat: translator.FormatOpenAI}
 	registry.register(cases[0].model, cases[0].mode, cases[0].format, updated)
 	cases[0].route = updated
 	for _, tc := range cases {

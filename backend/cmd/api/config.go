@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"erent/internal/config"
 )
@@ -27,7 +28,7 @@ func loadAPIConfiguration() (apiConfiguration, error) {
 		return apiConfiguration{}, fmt.Errorf("load upstream configuration: %w", err)
 	}
 	var encryptionKey []byte
-	if oaiConfiguration.Enabled() {
+	if oaiConfiguration.Enabled() || os.Getenv("OAUTH_ENCRYPTION_KEY") != "" {
 		encryptionKey, err = config.LoadOAuthEncryptionKey()
 		if err != nil {
 			return apiConfiguration{}, err
